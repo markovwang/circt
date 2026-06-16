@@ -217,12 +217,7 @@ private:
 
   // ── Long-lived port-plumbing caches ──────────────────────────────────
 
-  /// Track instance replacements as `insertOrReusePort` erases old instances.
-  mutable DenseMap<InstanceOp, InstanceOp> instReplaceMap;
-
-  /// Same replacement chain as `instReplaceMap`, but keyed by the raw
-  /// `Operation *` so a stale (erased) instance pointer can be resolved to its
-  /// live replacement without ever dereferencing the dangling pointer.
+  /// Track operation replacements as `insertOrReusePort` erases old instances.
   DenseMap<Operation *, Operation *> opReplaceMap;
 
   /// Chase `opReplaceMap` to the live operation for a possibly-erased op.

@@ -216,8 +216,7 @@ GatedClockConversion::PortPair GatedClockConversion::insertOrReusePort(
     auto cloneIface = oldInst.cloneWithInsertedPortsAndReplaceUses(newPorts);
     auto newInst = cast<InstanceOp>(cloneIface.getOperation());
     ig.replaceInstance(oldInst, newInst);
-    instReplaceMap[oldInst] = newInst;
-    opReplaceMap[oldInst.getOperation()] = newInst.getOperation();
+    opReplaceMap[oldInst] = newInst;
     // Record old-result → new-result value mappings before erasing `oldInst`,
     // so any of its result values cached in the analysis maps can be resolved
     // to the live instance.  New result index = old index + number of inserted
@@ -470,7 +469,7 @@ GatedClockConversion::PortPair GatedClockConversion::findOrInsertGatedPorts(
                         : std::nullopt);
       baseClkIndex = cIdx;
       enableIndex = eIdx;
-      inst = instReplaceMap[inst];
+      inst = cast<InstanceOp>(opReplaceMap[inst]);
     } else {
       baseClkIndex = match.clkIndex;
       enableIndex = match.enIndex;
@@ -496,7 +495,7 @@ GatedClockConversion::PortPair GatedClockConversion::findOrInsertGatedPorts(
                         : std::nullopt);
       baseClkIndex = cIdx;
       enableIndex = eIdx;
-      inst = instReplaceMap[inst];
+      inst = cast<InstanceOp>(opReplaceMap[inst]);
     } else {
       baseClkIndex = match.clkIndex;
       enableIndex = match.enIndex;
