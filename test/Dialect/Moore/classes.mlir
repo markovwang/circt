@@ -80,6 +80,26 @@ moore.class.classdecl @PropertyCombo {
   moore.class.propertydecl @localAutoI32 : !moore.i32
 }
 
+// CHECK-LABEL:   moore.class.classdecl @ConstraintCombo {
+// CHECK-NEXT:     moore.class.propertydecl @len : !moore.i32
+// CHECK-NEXT:     moore.class.constraintdecl @c_len {
+// CHECK-NEXT:     ^bb0(%{{.*}}: !moore.class<@ConstraintCombo>):
+// CHECK:            moore.yield
+// CHECK-NEXT:     }
+// CHECK-NEXT:     moore.class.constraintdecl @pure_c attributes {isExtern, isPure} {
+// CHECK-NEXT:     }
+// CHECK-NEXT:   }
+moore.class.classdecl @ConstraintCombo {
+  moore.class.propertydecl @len : !moore.i32
+  moore.class.constraintdecl @c_len {
+  ^bb0(%arg0: !moore.class<@ConstraintCombo>):
+    %true = moore.constant 1 : i1
+    moore.yield %true : i1
+  }
+  moore.class.constraintdecl @pure_c attributes {isExtern, isPure} {
+  }
+}
+
 /// Check that vtables roundtrip
 
 // CHECK-LABEL:  moore.vtable @testClass::@vtable {

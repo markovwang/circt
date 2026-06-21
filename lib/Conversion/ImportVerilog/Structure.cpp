@@ -8,12 +8,14 @@
 
 #include "ImportVerilogInternals.h"
 #include "slang/ast/Compilation.h"
+#include "slang/ast/Constraints.h"
 #include "slang/ast/symbols/ClassSymbols.h"
 #include "slang/ast/symbols/MemberSymbols.h"
 #include "slang/syntax/AllSyntax.h"
 #include "slang/syntax/SyntaxVisitor.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/Support/SaveAndRestore.h"
 
 using namespace circt;
 using namespace ImportVerilog;
@@ -2544,6 +2546,114 @@ struct ClassMethodVisitor : ClassDeclVisitorBase {
     return success();
   }
 
+  Location convertConstraintLocation(const slang::ast::Constraint &constraint) {
+    if (constraint.syntax)
+      return context.convertLocation(constraint.syntax->sourceRange());
+    return classLowering.op.getLoc();
+  }
+
+  FailureOr<Value> convertConstraint(const slang::ast::Constraint &constraint) {
+    using slang::ast::ConstraintKind;
+
+    auto loc = convertConstraintLocation(constraint);
+    switch (constraint.kind) {
+    case ConstraintKind::List: {
+      Value result;
+      auto &list = constraint.as<slang::ast::ConstraintList>();
+      for (auto *item : list.list) {
+        auto itemResult = convertConstraint(*item);
+        if (failed(itemResult))
+          return failure();
+        auto itemValue = context.convertToBool(*itemResult);
+        if (!itemValue)
+          return failure();
+
+        if (!result) {
+          result = itemValue;
+          continue;
+        }
+
+        result = context.convertToBool(result);
+        if (!result)
+          return failure();
+        result = moore::AndOp::create(builder, itemValue.getLoc(), result,
+                                      itemValue);
+      }
+
+      if (!result) {
+        auto i1Ty = moore::IntType::getInt(context.getContext(), 1);
+        result = moore::ConstantOp::create(builder, loc, i1Ty, 1,
+                                           /*isSigned=*/false);
+      }
+      return result;
+    }
+    case ConstraintKind::Expression: {
+      auto &expr = constraint.as<slang::ast::ExpressionConstraint>();
+      if (expr.isSoft) {
+        mlir::emitError(loc) << "unsupported constraint kind: soft expression";
+        return failure();
+      }
+
+      auto value = context.convertRvalueExpression(expr.expr);
+      if (!value)
+        return failure();
+      value = context.convertToBool(value);
+      if (!value)
+        return failure();
+      return value;
+    }
+    default:
+      mlir::emitError(loc) << "unsupported constraint kind: "
+                           << slang::ast::toString(constraint.kind);
+      return failure();
+    }
+  }
+
+  LogicalResult visit(const slang::ast::ConstraintBlockSymbol &constraint) {
+    auto loc = convertLocation(constraint.location);
+    auto unit = UnitAttr::get(context.getContext());
+    auto getFlag = [&](slang::ast::ConstraintBlockFlags flag) -> UnitAttr {
+      return constraint.flags.has(flag) ? unit : UnitAttr();
+    };
+
+    auto constraintOp = moore::ClassConstraintDeclOp::create(
+        builder, loc, constraint.name,
+        getFlag(slang::ast::ConstraintBlockFlags::Static),
+        getFlag(slang::ast::ConstraintBlockFlags::Pure),
+        getFlag(slang::ast::ConstraintBlockFlags::Initial),
+        getFlag(slang::ast::ConstraintBlockFlags::Extends),
+        getFlag(slang::ast::ConstraintBlockFlags::Final),
+        getFlag(slang::ast::ConstraintBlockFlags::Extern));
+
+    if (constraint.flags.has(slang::ast::ConstraintBlockFlags::Pure) ||
+        constraint.flags.has(slang::ast::ConstraintBlockFlags::Extern))
+      return success();
+
+    OpBuilder::InsertionGuard ig(builder);
+    auto *body = &constraintOp.getBody().emplaceBlock();
+    Value thisArg;
+    if (constraint.thisVar) {
+      auto classSym =
+          mlir::FlatSymbolRefAttr::get(classLowering.op.getSymNameAttr());
+      auto handleTy =
+          moore::ClassHandleType::get(context.getContext(), classSym);
+      thisArg = body->addArgument(handleTy, loc);
+    }
+
+    Context::ValueSymbolScope scope(context.valueSymbols);
+    llvm::SaveAndRestore saveThis(context.currentThisRef, thisArg);
+    if (constraint.thisVar)
+      context.valueSymbols.insert(constraint.thisVar, thisArg);
+
+    builder.setInsertionPointToEnd(body);
+    auto predicate = convertConstraint(constraint.getConstraints());
+    if (failed(predicate))
+      return failure();
+
+    moore::YieldOp::create(builder, loc, *predicate);
+    return success();
+  }
+
   // Parameters in specialized classes hold no further information; slang
   // already elaborates them in all relevant places.
   LogicalResult visit(const slang::ast::ParameterSymbol &) { return success(); }
@@ -2581,9 +2691,9 @@ struct ClassMethodVisitor : ClassDeclVisitorBase {
         return success();
 
       mlir::emitRemark(classLowering.op.getLoc())
-          << "Class builtin functions (needed for randomization, constraints, "
-             "and covergroups) are not yet supported and will be dropped "
-             "during lowering.";
+          << "Class builtin functions (needed for randomization, "
+             "constraint_mode, and covergroups) are not yet supported and "
+             "will be dropped during lowering.";
       remarkEmitted = true;
       return success();
     }

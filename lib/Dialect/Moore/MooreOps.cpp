@@ -1160,6 +1160,8 @@ LogicalResult YieldOp::verify() {
     expType = cond.getType();
   } else if (auto varOp = dyn_cast<GlobalVariableOp>(parentOp)) {
     expType = varOp.getType();
+  } else if (isa<ClassConstraintDeclOp>(parentOp)) {
+    expType = IntType::getInt(getContext(), 1);
   } else {
     llvm_unreachable("all in ParentOneOf handled");
   }
@@ -1530,13 +1532,15 @@ LogicalResult ClassDeclOp::verify() {
   auto &block = body.front();
   for (mlir::Operation &op : block) {
 
-    // allow only property and method decls and terminator
+    // Allow only class body declarations.
     if (llvm::isa<circt::moore::ClassPropertyDeclOp,
-                  circt::moore::ClassMethodDeclOp>(&op))
+                  circt::moore::ClassMethodDeclOp,
+                  circt::moore::ClassConstraintDeclOp>(&op))
       continue;
 
-    return emitOpError()
-           << "body may only contain 'moore.class.propertydecl' operations";
+    return emitOpError() << "body may only contain 'moore.class.propertydecl', "
+                            "'moore.class.methoddecl', and "
+                            "'moore.class.constraintdecl' operations";
   }
   return mlir::success();
 }
@@ -1639,6 +1643,12 @@ ClassPropertyRefOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Resolve the class symbol starting from the nearest symbol table.
   Operation *clsSym =
       symbolTable.lookupNearestSymbolFrom(getOperation(), classSym);
+  if (!clsSym) {
+    if (auto parentClassDecl = getOperation()->getParentOfType<ClassDeclOp>()) {
+      if (classSym.getRootReference() == parentClassDecl.getSymNameAttr())
+        clsSym = parentClassDecl;
+    }
+  }
   if (!clsSym)
     return emitOpError("referenced class symbol `")
            << classSym << "` was not found";

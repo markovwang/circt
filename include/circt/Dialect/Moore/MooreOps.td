@@ -2609,7 +2609,7 @@ def ConditionalOp : MooreOp<"conditional",[
 def YieldOp : MooreOp<"yield", [
   Pure,
   Terminator,
-  ParentOneOf<["ConditionalOp", "GlobalVariableOp"]>,
+  ParentOneOf<["ConditionalOp", "GlobalVariableOp", "ClassConstraintDeclOp"]>,
 ]> {
   let summary = "conditional yield and termination operation";
   let description = [{
@@ -3353,6 +3353,25 @@ def ClassMethodDeclOp
   let results = (outs);
   let assemblyFormat = [{
       $sym_name (`->` $impl^)? `:` $function_type attr-dict
+  }];
+}
+
+def ClassConstraintDeclOp
+    : MooreOp<"class.constraintdecl",
+              [Symbol, HasParent<"ClassDeclOp">, IsolatedFromAbove]> {
+  let summary = "Declare a class constraint block";
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    OptionalAttr<UnitAttr>:$isStatic,
+    OptionalAttr<UnitAttr>:$isPure,
+    OptionalAttr<UnitAttr>:$isInitial,
+    OptionalAttr<UnitAttr>:$isExtends,
+    OptionalAttr<UnitAttr>:$isFinal,
+    OptionalAttr<UnitAttr>:$isExtern
+  );
+  let regions = (region AnyRegion:$body);
+  let assemblyFormat = [{
+    $sym_name attr-dict-with-keyword $body
   }];
 }
 
