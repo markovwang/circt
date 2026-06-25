@@ -26,6 +26,29 @@ using namespace circt;
 using namespace circt::moore;
 using namespace mlir;
 
+static Operation *
+lookupSymbolFromOutwardSymbolTables(SymbolTableCollection &symbolTable,
+                                    Operation *from, SymbolRefAttr symbol) {
+  for (auto *scope = from; scope; scope = scope->getParentOp()) {
+    if (!scope->hasTrait<OpTrait::SymbolTable>())
+      continue;
+    if (auto *op = symbolTable.lookupSymbolIn(scope, symbol))
+      return op;
+  }
+  return nullptr;
+}
+
+static Operation *lookupSymbolFromOutwardSymbolTables(Operation *from,
+                                                      SymbolRefAttr symbol) {
+  for (auto *scope = from; scope; scope = scope->getParentOp()) {
+    if (!scope->hasTrait<OpTrait::SymbolTable>())
+      continue;
+    if (auto *op = SymbolTable::lookupSymbolIn(scope, symbol))
+      return op;
+  }
+  return nullptr;
+}
+
 //===----------------------------------------------------------------------===//
 // SVModuleOp
 //===----------------------------------------------------------------------===//
@@ -626,8 +649,8 @@ Block *GlobalVariableOp::getInitBlock() {
 LogicalResult
 GetGlobalVariableOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // Resolve the target symbol.
-  auto *symbol =
-      symbolTable.lookupNearestSymbolFrom(*this, getGlobalNameAttr());
+  auto *symbol = lookupSymbolFromOutwardSymbolTables(
+      symbolTable, getOperation(), getGlobalNameAttr());
   if (!symbol)
     return emitOpError() << "references unknown symbol " << getGlobalNameAttr();
 
@@ -1555,7 +1578,7 @@ LogicalResult ClassNewOp::verify() {
 
   // Resolve the referenced symbol starting from the nearest symbol table.
   mlir::Operation *sym =
-      mlir::SymbolTable::lookupNearestSymbolFrom(getOperation(), classSym);
+      lookupSymbolFromOutwardSymbolTables(getOperation(), classSym);
   if (!sym)
     return emitOpError("referenced class symbol `")
            << classSym << "` was not found";
@@ -1593,9 +1616,9 @@ ClassUpcastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto *op = getOperation();
 
   auto *srcDeclOp =
-      symbolTable.lookupNearestSymbolFrom(op, srcTy.getClassSym());
+      lookupSymbolFromOutwardSymbolTables(symbolTable, op, srcTy.getClassSym());
   auto *dstDeclOp =
-      symbolTable.lookupNearestSymbolFrom(op, dstTy.getClassSym());
+      lookupSymbolFromOutwardSymbolTables(symbolTable, op, dstTy.getClassSym());
   if (!srcDeclOp || !dstDeclOp)
     return emitOpError() << "failed to resolve class symbol(s): src="
                          << srcTy.getClassSym()
@@ -1617,7 +1640,8 @@ ClassUpcastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     if (!baseSym)
       break;
 
-    auto *baseOp = symbolTable.lookupNearestSymbolFrom(op, baseSym);
+    auto *baseOp =
+        lookupSymbolFromOutwardSymbolTables(symbolTable, op, baseSym);
     cur = llvm::dyn_cast_or_null<ClassDeclOp>(baseOp);
   }
 
@@ -1641,14 +1665,8 @@ ClassPropertyRefOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError("instance type is missing a class symbol");
 
   // Resolve the class symbol starting from the nearest symbol table.
-  Operation *clsSym =
-      symbolTable.lookupNearestSymbolFrom(getOperation(), classSym);
-  if (!clsSym) {
-    if (auto parentClassDecl = getOperation()->getParentOfType<ClassDeclOp>()) {
-      if (classSym.getRootReference() == parentClassDecl.getSymNameAttr())
-        clsSym = parentClassDecl;
-    }
-  }
+  Operation *clsSym = lookupSymbolFromOutwardSymbolTables(
+      symbolTable, getOperation(), classSym);
   if (!clsSym)
     return emitOpError("referenced class symbol `")
            << classSym << "` was not found";
@@ -1693,7 +1711,8 @@ VTableLoadMethodOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   auto implSym = object.getType().getClassSym();
 
   // Check that classdecl of class handle exists
-  Operation *implOp = symbolTable.lookupNearestSymbolFrom(op, implSym);
+  Operation *implOp =
+      lookupSymbolFromOutwardSymbolTables(symbolTable, op, implSym);
   if (!implOp)
     return emitOpError() << "implementing class " << implSym << " not found";
   auto implClass = cast<moore::ClassDeclOp>(implOp);
@@ -1713,7 +1732,8 @@ VTableLoadMethodOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     SymbolRefAttr baseSym = cursor.getBaseAttr();
     if (!baseSym)
       break;
-    Operation *baseOp = symbolTable.lookupNearestSymbolFrom(op, baseSym);
+    Operation *baseOp =
+        lookupSymbolFromOutwardSymbolTables(symbolTable, op, baseSym);
     cursor = baseOp ? cast<moore::ClassDeclOp>(baseOp) : moore::ClassDeclOp();
   }
 

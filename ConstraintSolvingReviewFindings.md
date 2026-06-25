@@ -110,15 +110,16 @@ Risk:
   silently represented as an empty extern declaration rather than preserving the
   actual body.
 
-Suggested direction:
+Current working-tree update:
 
-- Decide and implement one of:
-  - Attach the external body to the corresponding class constraint declaration.
-  - Emit a precise unsupported diagnostic for out-of-block constraint
-    definitions.
+- Non-pure `extern constraint` declarations now emit a precise unsupported
+  diagnostic instead of being preserved as empty declarations.
+- Pure constraint declarations are still preserved as body-less declarations.
+- A debug assert records the current slang assumption that pure constraint
+  declarations are body-less extern declarations.
 
-This should be resolved before building solver behavior on top of the imported
-IR.
+This keeps extern constraint definitions unsupported until there is an explicit
+body-attachment strategy.
 
 ## Narrow Feature Coverage
 

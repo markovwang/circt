@@ -1,35 +1,30 @@
-// P0a 边界探查:约束体符号可见性
-// 目的:验证约束体引用类属性时,现有通用机制(getImplicitThisRef +
-//       getAncestorClassWithProperty + materializeConversion)能否覆盖
-//       本类属性 / 继承属性 / 多层继承 / 同名遮蔽 / 静态属性。
-// T1(本类属性)通过;T2/T3/T4/T5 暴露已知缺陷(见 XFAIL),待 P0a 修复。
-// T6(static constraint 无 this)已迁移到 constraints-errors.sv 并修复。
-//
-// 继承属性(T2/T3/T4)静默丢类、静态属性(T5)符号未注册 —— P0a 待修
-// XFAIL: *
 // RUN: circt-verilog --ir-moore %s 2>&1 | FileCheck %s --check-prefix=IR
 // REQUIRES: slang
 
-// T1: 本类属性(基线,应已通过)
+// Same-class property access is the baseline case.
 class T1;
   rand int x;
   constraint c { x > 0; }
 endclass
+
 // IR-LABEL: moore.class.classdecl @T1
 // IR:       moore.class.propertydecl @x : !moore.i32
 // IR:       moore.class.constraintdecl @c
 
-// T2: 继承属性 —— 派生类约束体引用基类 rand 属性
+// A derived class constraint can reference a base class property.
 class T2Base;
   rand int x;
 endclass
 class T2Derived extends T2Base;
   constraint c { x > 0; }
 endclass
+
 // IR-LABEL: moore.class.classdecl @T2Derived extends @T2Base
 // IR:       moore.class.constraintdecl @c
+// IR:       moore.class.upcast {{.*}} : <@T2Derived> to <@T2Base>
+// IR:       moore.class.property_ref {{.*}}[@x] : <@T2Base> -> <i32>
 
-// T3: 多层继承属性 —— C 的约束体引用 A 的属性,中间隔 B
+// A constraint can reference an inherited property through multiple bases.
 class T3A;
   rand int x;
 endclass
@@ -38,10 +33,13 @@ endclass
 class T3C extends T3B;
   constraint c { x > 0; }
 endclass
+
 // IR-LABEL: moore.class.classdecl @T3C extends @T3B
 // IR:       moore.class.constraintdecl @c
+// IR:       moore.class.upcast {{.*}} : <@T3C> to <@T3A>
+// IR:       moore.class.property_ref {{.*}}[@x] : <@T3A> -> <i32>
 
-// T4: 同名属性遮蔽 —— 本类与基类都有 x,约束体引用应解析到本类(就近)
+// Same-name properties are resolved to the nearest declaration.
 class T4Base;
   rand int x;
 endclass
@@ -49,15 +47,20 @@ class T4Derived extends T4Base;
   rand int x;
   constraint c { x > 0; }
 endclass
-// IR-LABEL: moore.class.classdecl @T4Derived extends @T4Base
-// IR:       moore.class.constraintdecl @c
 
-// T5: 静态属性 —— 约束体引用类静态属性(不依赖 this)
+// IR-LABEL: moore.class.classdecl @T4Derived extends @T4Base
+// IR:       moore.class.propertydecl @x : !moore.i32
+// IR:       moore.class.constraintdecl @c
+// IR:       moore.class.property_ref {{.*}}[@x] : <@T4Derived> -> <i32>
+
+// Static properties are hoisted to globals and remain visible from constraints.
 class T5;
   static int s = 5;
   rand int x;
   constraint c { x > s; }
 endclass
+
 // IR-LABEL: moore.class.classdecl @T5
 // IR:       moore.class.constraintdecl @c
-
+// IR:       moore.get_global_variable @"T5::s" : <i32>
+// IR:       moore.global_variable @"T5::s" : !moore.i32

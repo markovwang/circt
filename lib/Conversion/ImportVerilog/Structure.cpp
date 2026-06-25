@@ -2615,19 +2615,31 @@ struct ClassMethodVisitor : ClassDeclVisitorBase {
     auto getFlag = [&](slang::ast::ConstraintBlockFlags flag) -> UnitAttr {
       return constraint.flags.has(flag) ? unit : UnitAttr();
     };
+    auto isExtern =
+        constraint.flags.has(slang::ast::ConstraintBlockFlags::Extern);
+    auto isPure = constraint.flags.has(slang::ast::ConstraintBlockFlags::Pure);
 
     auto constraintOp = moore::ClassConstraintDeclOp::create(
         builder, loc, constraint.name,
         getFlag(slang::ast::ConstraintBlockFlags::Static),
-        getFlag(slang::ast::ConstraintBlockFlags::Pure),
+        isPure ? unit : UnitAttr(),
         getFlag(slang::ast::ConstraintBlockFlags::Initial),
         getFlag(slang::ast::ConstraintBlockFlags::Extends),
         getFlag(slang::ast::ConstraintBlockFlags::Final),
-        getFlag(slang::ast::ConstraintBlockFlags::Extern));
+        isExtern ? unit : UnitAttr());
 
-    if (constraint.flags.has(slang::ast::ConstraintBlockFlags::Pure) ||
-        constraint.flags.has(slang::ast::ConstraintBlockFlags::Extern))
+    if (isExtern && !isPure) {
+      mlir::emitError(loc)
+          << "unsupported extern constraint declaration; out-of-block "
+             "constraint definitions are not imported yet";
+      return failure();
+    }
+
+    if (isPure) {
+      assert(isExtern &&
+             "pure constraint declarations are expected to be body-less");
       return success();
+    }
 
     OpBuilder::InsertionGuard ig(builder);
     auto *body = &constraintOp.getBody().emplaceBlock();
