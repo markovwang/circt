@@ -2,6 +2,7 @@
 
 #define ARC_RUNTIME_JITBIND_FNDECL
 #include "circt/Dialect/Arc/Runtime/ArcRuntime.h"
+#include "circt/Dialect/Arc/Runtime/ConstraintSolver.h"
 #include "circt/Dialect/Arc/Runtime/JITBind.h"
 #include "circt/Dialect/Arc/Runtime/TraceTaps.h"
 
@@ -72,6 +73,20 @@ TEST(ArcRuntimeTest, DieOnWrongMagic) {
 
 TEST(ArcRuntimeTest, GetAPIVersion) {
   EXPECT_EQ(arcRuntimeGetAPIVersion(), ARC_RUNTIME_API_VERSION);
+}
+
+TEST(ArcRuntimeTest, ConstraintSolverFindsBvModel) {
+  if (!arcRuntimeSolverIsAvailable())
+    GTEST_SKIP() << "Bitwuzla randomize runtime is disabled";
+
+  void *solver = arcRuntimeSolverCreate();
+  void *x = arcRuntimeSolverBvVar(solver, "x", 8);
+  void *zero = arcRuntimeSolverBvConst(solver, 0, 8);
+  void *positive = arcRuntimeSolverSgt(solver, x, zero);
+  arcRuntimeSolverAssert(solver, positive);
+  EXPECT_TRUE(arcRuntimeSolverCheck(solver));
+  EXPECT_GT(arcRuntimeSolverGetBv(solver, x), 0u);
+  arcRuntimeSolverDestroy(solver);
 }
 
 TEST(ArcRuntimeTest, InstanceLifecycleIR) {

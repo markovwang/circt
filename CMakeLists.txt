@@ -447,6 +447,27 @@ option(CIRCT_ARC_ENABLE_BITWUZLA_RANDOMIZE
 if(CIRCT_ARC_ENABLE_BITWUZLA_RANDOMIZE)
   find_package(Bitwuzla CONFIG QUIET)
   if(NOT Bitwuzla_FOUND)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+      pkg_check_modules(BitwuzlaPkg QUIET bitwuzla)
+      if(BitwuzlaPkg_FOUND)
+        add_library(Bitwuzla::bitwuzla INTERFACE IMPORTED)
+        foreach(includeDir ${BitwuzlaPkg_INCLUDE_DIRS})
+          if(EXISTS "${includeDir}")
+            list(APPEND BitwuzlaExistingIncludeDirs "${includeDir}")
+          endif()
+        endforeach()
+        set_target_properties(Bitwuzla::bitwuzla PROPERTIES
+          INTERFACE_INCLUDE_DIRECTORIES "${BitwuzlaExistingIncludeDirs}"
+          INTERFACE_COMPILE_OPTIONS "${BitwuzlaPkg_CFLAGS_OTHER}"
+          INTERFACE_LINK_DIRECTORIES "${BitwuzlaPkg_LIBRARY_DIRS}"
+          INTERFACE_LINK_LIBRARIES "${BitwuzlaPkg_LIBRARIES}"
+          INTERFACE_LINK_OPTIONS "${BitwuzlaPkg_LDFLAGS_OTHER}")
+        set(Bitwuzla_FOUND TRUE)
+      endif()
+    endif()
+  endif()
+  if(NOT Bitwuzla_FOUND)
     find_path(Bitwuzla_INCLUDE_DIR NAMES bitwuzla/c/bitwuzla.h)
     find_library(Bitwuzla_LIBRARY NAMES bitwuzla)
     include(FindPackageHandleStandardArgs)
