@@ -1,5 +1,6 @@
 set(ArcRuntimeLibSources
   ArcRuntime.cpp
+  ConstraintSolver.cpp
   ModelInstance.cpp
   TraceEncoder.cpp
   VCDTraceEncoder.cpp
@@ -34,10 +35,17 @@ if(CIRCT_LIBFST_ENABLED)
   target_link_libraries(CIRCTArcRuntime PRIVATE fst)
 endif()
 
+if(CIRCT_ARC_ENABLE_BITWUZLA_RANDOMIZE)
+  target_compile_definitions(CIRCTArcRuntime
+    PUBLIC CIRCT_ARC_HAS_BITWUZLA_RANDOMIZE=1)
+  target_link_libraries(CIRCTArcRuntime PRIVATE Bitwuzla::bitwuzla)
+endif()
+
 # Install required header files
 install(FILES
   ${CIRCT_MAIN_INCLUDE_DIR}/circt/Dialect/Arc/Runtime/ArcRuntime.h
   ${CIRCT_MAIN_INCLUDE_DIR}/circt/Dialect/Arc/Runtime/Common.h
+  ${CIRCT_MAIN_INCLUDE_DIR}/circt/Dialect/Arc/Runtime/ConstraintSolver.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/circt/Dialect/Arc/Runtime
   COMPONENT CIRCTArcRuntime
 )
@@ -52,4 +60,10 @@ target_compile_definitions(obj.CIRCTArcJITRuntime PUBLIC ARC_RUNTIME_JIT_BIND)
 if(CIRCT_LIBFST_ENABLED)
   target_compile_definitions(obj.CIRCTArcJITRuntime PUBLIC CIRCT_LIBFST_ENABLED=1)
   target_link_libraries(CIRCTArcJITRuntime PRIVATE fst)
+endif()
+
+if(CIRCT_ARC_ENABLE_BITWUZLA_RANDOMIZE)
+  target_compile_definitions(obj.CIRCTArcJITRuntime
+    PUBLIC CIRCT_ARC_HAS_BITWUZLA_RANDOMIZE=1)
+  target_link_libraries(CIRCTArcJITRuntime PRIVATE Bitwuzla::bitwuzla)
 endif()

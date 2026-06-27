@@ -437,6 +437,32 @@ else()
 endif()
 
 #-------------------------------------------------------------------------------
+# Bitwuzla Configuration (for Arc SystemVerilog class randomize support)
+#-------------------------------------------------------------------------------
+
+option(CIRCT_ARC_ENABLE_BITWUZLA_RANDOMIZE
+  "Enable Bitwuzla-backed SystemVerilog class randomize support in Arc runtime."
+  OFF)
+
+if(CIRCT_ARC_ENABLE_BITWUZLA_RANDOMIZE)
+  find_package(Bitwuzla CONFIG QUIET)
+  if(NOT Bitwuzla_FOUND)
+    find_path(Bitwuzla_INCLUDE_DIR NAMES bitwuzla/c/bitwuzla.h)
+    find_library(Bitwuzla_LIBRARY NAMES bitwuzla)
+    include(FindPackageHandleStandardArgs)
+    find_package_handle_standard_args(Bitwuzla DEFAULT_MSG
+      Bitwuzla_LIBRARY Bitwuzla_INCLUDE_DIR)
+    if(Bitwuzla_FOUND AND NOT TARGET Bitwuzla::bitwuzla)
+      add_library(Bitwuzla::bitwuzla UNKNOWN IMPORTED)
+      set_target_properties(Bitwuzla::bitwuzla PROPERTIES
+        IMPORTED_LOCATION "${Bitwuzla_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${Bitwuzla_INCLUDE_DIR}")
+    endif()
+  endif()
+  message(STATUS "Arc class randomize support enabled with Bitwuzla.")
+endif()
+
+#-------------------------------------------------------------------------------
 # Z3Lib Configuration (for circt-lec and SMT dialect integration tests)
 #-------------------------------------------------------------------------------
 
