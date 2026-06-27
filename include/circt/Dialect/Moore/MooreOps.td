@@ -3331,7 +3331,12 @@ def ClassPropertyDeclOp
   Declares a property within a class declaration.
   }];
 
-  let arguments = (ins SymbolNameAttr:$sym_name, TypeAttr:$type);
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    TypeAttr:$type,
+    OptionalAttr<UnitAttr>:$isRand,
+    OptionalAttr<UnitAttr>:$isRandC
+  );
 
   let results = (outs);
   let assemblyFormat = [{

@@ -8,12 +8,12 @@ class Packet;
 endclass
 
 // CHECK-LABEL: moore.class.classdecl @Packet
-// CHECK:   moore.class.propertydecl @len : !moore.i32
+// CHECK:   moore.class.propertydecl @len : !moore.i32 {isRand}
 // CHECK:   moore.class.constraintdecl @c_len {
 // CHECK:     moore.yield
 
 // MOORE-LABEL: moore.class.classdecl @Packet
-// MOORE:   moore.class.propertydecl @len : !moore.i32
+// MOORE:   moore.class.propertydecl @len : !moore.i32 {isRand}
 // MOORE:   moore.class.constraintdecl @c_len {
 // MOORE:     moore.yield
 
@@ -27,13 +27,13 @@ class Ordered;
 endclass
 
 // CHECK-LABEL: moore.class.classdecl @Ordered
-// CHECK:   moore.class.propertydecl @a : !moore.i32
+// CHECK:   moore.class.propertydecl @a : !moore.i32 {isRand}
 // CHECK:   moore.class.constraintdecl @first
 // CHECK:   moore.class.methoddecl @middle
 // CHECK:   moore.class.constraintdecl @second
 
 // MOORE-LABEL: moore.class.classdecl @Ordered
-// MOORE:   moore.class.propertydecl @a : !moore.i32
+// MOORE:   moore.class.propertydecl @a : !moore.i32 {isRand}
 // MOORE:   moore.class.constraintdecl @first
 // MOORE:   moore.class.methoddecl @middle
 // MOORE:   moore.class.constraintdecl @second
@@ -63,3 +63,13 @@ endclass
 // MOORE-LABEL: moore.class.classdecl @Flags
 // MOORE:   moore.class.constraintdecl @static_c attributes {isStatic} {
 // MOORE:   moore.class.constraintdecl @pure_c {
+
+class RandCProp;
+  randc bit [7:0] id;
+endclass
+
+// CHECK-LABEL: moore.class.classdecl @RandCProp
+// CHECK:   moore.class.propertydecl @id : !moore.i8 {isRandC}
+
+// MOORE-LABEL: moore.class.classdecl @RandCProp
+// MOORE:   moore.class.propertydecl @id : !moore.i8 {isRandC}

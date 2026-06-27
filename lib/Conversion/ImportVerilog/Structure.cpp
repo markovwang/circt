@@ -2490,7 +2490,13 @@ struct ClassPropertyVisitor : ClassDeclVisitorBase {
       return failure();
 
     if (prop.lifetime == slang::ast::VariableLifetime::Automatic) {
-      moore::ClassPropertyDeclOp::create(builder, loc, prop.name, ty);
+      auto unit = UnitAttr::get(context.getContext());
+      auto isRand =
+          prop.randMode == slang::ast::RandMode::Rand ? unit : UnitAttr();
+      auto isRandC =
+          prop.randMode == slang::ast::RandMode::RandC ? unit : UnitAttr();
+      moore::ClassPropertyDeclOp::create(builder, loc, prop.name, ty, isRand,
+                                         isRandC);
       return success();
     }
 
