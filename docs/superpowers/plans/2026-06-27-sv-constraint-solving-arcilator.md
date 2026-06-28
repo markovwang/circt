@@ -10,7 +10,7 @@
 
 ## Implementation Status
 
-Status as of commit `47aa4852b`:
+Status as of commit `c6c5566fd`:
 
 - Task 1 complete: optional Arc runtime solver hook.
 - Task 2 complete: Bitwuzla-backed runtime wrapper.
@@ -19,10 +19,11 @@ Status as of commit `47aa4852b`:
 - Task 5 complete: scalar constraint expression lowering to solver runtime calls.
 - Task 6 complete: 1-dim unpacked array solver variables and generated predicate crosscheck helper.
 - Task 7 complete for code/tests: simple object `randomize()` imports to Moore IR and lowers to the generated helper.
+- Post-plan demo step complete: scalar integral `rand` model values are committed back into object storage after crosscheck succeeds, and solver cleanup is emitted on success/failure paths.
 
 Remaining implementation gaps:
 
-- Solver model values are not committed back into object fields yet.
+- 1-dim unpacked array model values are solved and crosschecked but not committed back into object fields yet.
 - `rand_mode` and `constraint_mode` are stored but not read at runtime.
 - Inline `with` constraints are rejected / unsupported.
 - Deterministic seed/replay behavior is not implemented.
@@ -63,6 +64,10 @@ Remaining implementation gaps:
   - Imports simple object `randomize()` calls without inline constraints.
   - Lowers `moore.class.randomize` to the generated helper.
   - Adds ImportVerilog and MooreToCore tests.
+- `c6c5566fd` `[MooreToCore] Commit scalar randomize models`
+  - Emits scalar integral rand-field writeback after solver SAT and predicate crosscheck.
+  - Emits `arcRuntimeSolverDestroy` on success and failure paths.
+  - Extends `randomize-call.mlir` to check model extraction, field store, and solver cleanup.
 
 ## Global Constraints
 

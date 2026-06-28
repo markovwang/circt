@@ -34,10 +34,14 @@ constraint solving:
   element.
 - A generated predicate helper crosschecks solver model values before the
   randomize helper reports success.
+- Scalar integral `rand` field model values are committed back into object
+  storage after crosscheck succeeds.
+- Randomize helpers destroy the solver on success and failure paths.
 
 This is still a skeleton for runtime solving. The major missing piece is model
-commit: solver model values are not yet written back into object fields.
-Runtime reads of `rand_mode` and `constraint_mode` are also not wired yet.
+coverage for aggregates: 1-dim unpacked array values are solved and
+crosschecked, but not written back yet. Runtime reads of `rand_mode` and
+`constraint_mode` are also not wired yet.
 
 ## Commit Map
 
@@ -75,6 +79,13 @@ Runtime reads of `rand_mode` and `constraint_mode` are also not wired yet.
   - Imports simple object `randomize()` calls from SystemVerilog.
   - Lowers `moore.class.randomize` to the generated randomize helper.
   - Adds ImportVerilog and MooreToCore randomize-call tests.
+- `c6c5566fd` `[MooreToCore] Commit scalar randomize models`
+  - Writes scalar integral `rand` model values back into class object storage
+    after solver SAT and predicate crosscheck.
+  - Adds solver cleanup with `arcRuntimeSolverDestroy` on success and failure
+    paths.
+  - Extends the randomize-call test to check model extraction, field store, and
+    solver destruction.
 
 ## Known Follow-Up Gaps
 
@@ -161,13 +172,15 @@ are not justified by the current use case.
   array element reads, equality, and signed greater-than.
 - Result validation: generated predicate helpers re-evaluate lowered
   constraints over solver model values before the helper reports success.
+- Model commit: scalar integral `rand` fields are written back to object
+  storage after crosscheck succeeds. 1-dim unpacked array model values are not
+  written back yet.
 - Runtime mode storage: hidden `rand_mode` and `constraint_mode` fields are
   created in class storage, but runtime enable/disable behavior is not wired
   yet.
 
-Unsupported forms should diagnose instead of being silently ignored. Candidate
-value writeback into object fields is still pending, so the current path should
-be treated as a solver-call and validation skeleton rather than a complete
+Unsupported forms should diagnose instead of being silently ignored. The current
+path is enough for a scalar-rand demo skeleton, but it is not a complete
 SystemVerilog `randomize()` implementation.
 
 ## Audit TODO List
