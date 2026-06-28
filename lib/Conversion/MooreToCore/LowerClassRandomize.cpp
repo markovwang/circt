@@ -8,6 +8,8 @@
 
 #include "circt/Dialect/Moore/MooreOps.h"
 #include "circt/Dialect/Moore/MooreTypes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
@@ -16,6 +18,9 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/FormatVariadic.h"
+
+#include <algorithm>
 
 using namespace circt;
 using namespace circt::moore;
@@ -48,6 +53,10 @@ struct ConstraintProblemDesc {
 
 static std::string getRandomizeHelperName(ClassDeclOp cls) {
   return (Twine("__circt_randomize_") + cls.getSymName()).str();
+}
+
+static std::string getRandomizeCheckHelperName(ClassDeclOp cls) {
+  return (Twine("__circt_randomize_check_") + cls.getSymName()).str();
 }
 
 static std::optional<unsigned> getIntegralWidth(Type type) {
@@ -145,6 +154,7 @@ struct SolverRuntime {
   func::FuncOp sgt;
   func::FuncOp assertFn;
   func::FuncOp check;
+  func::FuncOp getBv;
 };
 
 static SolverRuntime getOrCreateSolverRuntime(ModuleOp module,
@@ -170,8 +180,48 @@ static SolverRuntime getOrCreateSolverRuntime(ModuleOp module,
                              {ptrTy, ptrTy}, {}),
       getOrCreateRuntimeFunc(module, builder, "arcRuntimeSolverCheck", {ptrTy},
                              {i1Ty}),
+      getOrCreateRuntimeFunc(module, builder, "arcRuntimeSolverGetBv",
+                             {ptrTy, ptrTy}, {i64Ty}),
   };
 }
+
+class SolverStringCache {
+public:
+  Value getOrCreate(OpBuilder &builder, Location loc, ClassDeclOp cls,
+                    StringRef name) {
+    if (auto it = cache.find(name); it != cache.end())
+      return LLVM::AddressOfOp::create(builder, loc, it->second);
+
+    auto *ctx = builder.getContext();
+    auto symbol =
+        (Twine("__circt_randomize_name_") + cls.getSymName() + "_" + name)
+            .str();
+    std::replace(symbol.begin(), symbol.end(), '[', '_');
+    std::replace(symbol.begin(), symbol.end(), ']', '\0');
+    symbol.erase(std::remove(symbol.begin(), symbol.end(), '\0'), symbol.end());
+
+    SmallVector<char> bytes(name.begin(), name.end());
+    bytes.push_back(0);
+
+    LLVM::GlobalOp global;
+    {
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPointToStart(
+          cls->getParentOfType<ModuleOp>().getBody());
+      auto type =
+          LLVM::LLVMArrayType::get(IntegerType::get(ctx, 8), bytes.size());
+      global = LLVM::GlobalOp::create(
+          builder, loc, type, /*isConstant=*/true, LLVM::Linkage::Private,
+          symbol, builder.getStringAttr(bytes), /*alignment=*/0);
+    }
+
+    cache[name] = global;
+    return LLVM::AddressOfOp::create(builder, loc, global);
+  }
+
+private:
+  llvm::StringMap<LLVM::GlobalOp> cache;
+};
 
 struct SolverEmitter {
   ModuleOp module;
@@ -179,14 +229,16 @@ struct SolverEmitter {
   Location loc;
   ConstraintProblemDesc &problem;
   SolverRuntime runtime;
+  SolverStringCache &strings;
   Value solver;
   llvm::StringMap<Value> scalarVariables;
+  llvm::StringMap<SmallVector<Value>> arrayVariables;
 
   SolverEmitter(ModuleOp module, OpBuilder &builder, Location loc,
                 ConstraintProblemDesc &problem, SolverRuntime runtime,
-                Value solver)
+                SolverStringCache &strings, Value solver)
       : module(module), builder(builder), loc(loc), problem(problem),
-        runtime(runtime), solver(solver) {}
+        runtime(runtime), strings(strings), solver(solver) {}
 
   Value getI32(uint32_t value) {
     auto type = IntegerType::get(builder.getContext(), 32);
@@ -246,12 +298,90 @@ struct SolverEmitter {
              << "only rand fields are supported in randomize constraints";
     if (field->isOneDimUnpackedArray)
       return op.emitError()
-             << "array rand fields are not supported by scalar solver lowering";
+             << "randomize constraints only support constant indices into "
+                "1-dim unpacked rand arrays";
 
-    Value term = callValue(runtime.bvVar,
-                           {solver, getNullPtr(), getI32(field->bitWidth)});
+    Value namePtr = strings.getOrCreate(builder, loc, problem.cls, name);
+    Value term =
+        callValue(runtime.bvVar, {solver, namePtr, getI32(field->bitWidth)});
     scalarVariables[name] = term;
     return term;
+  }
+
+  FailureOr<Value> emitExtract(ExtractOp op) {
+    auto read = op.getInput().getDefiningOp<ReadOp>();
+    if (!read)
+      return op.emitError()
+             << "randomize constraints only support constant indices into "
+                "1-dim unpacked rand arrays";
+    auto property = read.getInput().getDefiningOp<ClassPropertyRefOp>();
+    if (!property)
+      return op.emitError()
+             << "randomize constraints only support constant indices into "
+                "1-dim unpacked rand arrays";
+
+    const RandFieldDesc *field = nullptr;
+    for (auto &candidate : problem.randFields) {
+      if (candidate.property.getSymName() == property.getProperty()) {
+        field = &candidate;
+        break;
+      }
+    }
+    if (!field || !field->isOneDimUnpackedArray)
+      return op.emitError()
+             << "randomize constraints only support constant indices into "
+                "1-dim unpacked rand arrays";
+
+    auto index = op.getLowBit();
+    if (index >= field->elementCount)
+      return op.emitError()
+             << "randomize constraints only support in-bounds constant indices "
+                "into 1-dim unpacked rand arrays";
+
+    auto fieldName = property.getProperty();
+    auto &variables = arrayVariables[fieldName];
+    if (variables.empty()) {
+      variables.reserve(field->elementCount);
+      for (unsigned i = 0, e = field->elementCount; i != e; ++i) {
+        auto elementName = llvm::formatv("{0}[{1}]", fieldName, i).str();
+        Value namePtr =
+            strings.getOrCreate(builder, loc, problem.cls, elementName);
+        variables.push_back(callValue(
+            runtime.bvVar, {solver, namePtr, getI32(field->bitWidth)}));
+      }
+    }
+    return variables[index];
+  }
+
+  void emitModelValues(SmallVectorImpl<Value> &values) {
+    for (auto &field : problem.randFields) {
+      if (!field.isOneDimUnpackedArray) {
+        auto name = field.property.getSymName();
+        if (!scalarVariables.count(name)) {
+          auto namePtr = strings.getOrCreate(builder, loc, problem.cls, name);
+          scalarVariables[name] = callValue(
+              runtime.bvVar, {solver, namePtr, getI32(field.bitWidth)});
+        }
+        values.push_back(
+            callValue(runtime.getBv, {solver, scalarVariables[name]}));
+        continue;
+      }
+
+      auto fieldName = field.property.getSymName();
+      auto &variables = arrayVariables[fieldName];
+      if (variables.empty()) {
+        variables.reserve(field.elementCount);
+        for (unsigned i = 0, e = field.elementCount; i != e; ++i) {
+          auto elementName = llvm::formatv("{0}[{1}]", fieldName, i).str();
+          Value namePtr =
+              strings.getOrCreate(builder, loc, problem.cls, elementName);
+          variables.push_back(callValue(
+              runtime.bvVar, {solver, namePtr, getI32(field.bitWidth)}));
+        }
+      }
+      for (auto variable : variables)
+        values.push_back(callValue(runtime.getBv, {solver, variable}));
+    }
   }
 
   FailureOr<Value> emitEq(EqOp, Value lhs, Value rhs) {
@@ -263,6 +393,98 @@ struct SolverEmitter {
   }
 
   void emitAssert(Value term) { callVoid(runtime.assertFn, {solver, term}); }
+};
+
+struct PredicateEmitter {
+  OpBuilder &builder;
+  Location loc;
+  ConstraintProblemDesc &problem;
+  ArrayRef<Value> candidates;
+  llvm::StringMap<Value> scalarCandidates;
+  llvm::StringMap<SmallVector<Value>> arrayCandidates;
+
+  PredicateEmitter(OpBuilder &builder, Location loc,
+                   ConstraintProblemDesc &problem, ArrayRef<Value> candidates)
+      : builder(builder), loc(loc), problem(problem), candidates(candidates) {
+    unsigned next = 0;
+    for (auto &field : problem.randFields) {
+      if (!field.isOneDimUnpackedArray) {
+        scalarCandidates[field.property.getSymName()] =
+            narrow(candidates[next++], field.bitWidth);
+        continue;
+      }
+
+      auto &elements = arrayCandidates[field.property.getSymName()];
+      elements.reserve(field.elementCount);
+      for (unsigned i = 0, e = field.elementCount; i != e; ++i)
+        elements.push_back(narrow(candidates[next++], field.bitWidth));
+    }
+  }
+
+  Value narrow(Value value, unsigned width) {
+    auto type = IntegerType::get(builder.getContext(), width);
+    if (width == 64)
+      return value;
+    return arith::TruncIOp::create(builder, loc, type, value);
+  }
+
+  FailureOr<Value> emitConstant(ConstantOp op) {
+    auto value = op.getValue();
+    if (value.hasUnknown())
+      return op.emitError()
+             << "unsupported randomize constraint constant with X/Z bits";
+
+    auto bits = value.toAPInt(false);
+    auto type = IntegerType::get(builder.getContext(), op.getType().getWidth());
+    return arith::ConstantOp::create(builder, loc, IntegerAttr::get(type, bits))
+        .getResult();
+  }
+
+  FailureOr<Value> emitPropertyRead(ClassPropertyRefOp op) {
+    if (auto it = scalarCandidates.find(op.getProperty());
+        it != scalarCandidates.end())
+      return it->second;
+    return op.emitError()
+           << "only rand fields are supported in randomize constraints";
+  }
+
+  FailureOr<Value> emitExtract(ExtractOp op) {
+    auto read = op.getInput().getDefiningOp<ReadOp>();
+    if (!read)
+      return op.emitError()
+             << "randomize constraints only support constant indices into "
+                "1-dim unpacked rand arrays";
+    auto property = read.getInput().getDefiningOp<ClassPropertyRefOp>();
+    if (!property)
+      return op.emitError()
+             << "randomize constraints only support constant indices into "
+                "1-dim unpacked rand arrays";
+
+    auto it = arrayCandidates.find(property.getProperty());
+    if (it == arrayCandidates.end())
+      return op.emitError()
+             << "randomize constraints only support constant indices into "
+                "1-dim unpacked rand arrays";
+
+    auto index = op.getLowBit();
+    if (index >= it->second.size())
+      return op.emitError()
+             << "randomize constraints only support in-bounds constant indices "
+                "into 1-dim unpacked rand arrays";
+    return it->second[index];
+  }
+
+  FailureOr<Value> emitEq(EqOp, Value lhs, Value rhs) {
+    return arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq, lhs,
+                                 rhs)
+        .getResult();
+  }
+
+  FailureOr<Value> emitSgt(SgtOp, Value lhs, Value rhs) {
+    return arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::sgt, lhs,
+                                 rhs)
+        .getResult();
+  }
 };
 
 template <typename Emitter>
@@ -291,6 +513,13 @@ struct ConstraintExprLowerer {
         .template Case<ClassPropertyRefOp>(
             [&](auto op) { return emitter.emitPropertyRead(op); })
         .template Case<ReadOp>([&](auto op) { return lower(op.getInput()); })
+        .template Case<ExtractOp>(
+            [&](auto op) { return emitter.emitExtract(op); })
+        .template Case<DynExtractRefOp>([](auto op) -> FailureOr<Value> {
+          return op.emitError()
+                 << "randomize constraints only support constant indices into "
+                    "1-dim unpacked rand arrays";
+        })
         .template Case<EqOp>([&](auto op) -> FailureOr<Value> {
           auto lhs = lower(op.getLhs());
           if (failed(lhs))
@@ -315,6 +544,60 @@ struct ConstraintExprLowerer {
   }
 };
 
+static unsigned getCandidateCount(ConstraintProblemDesc &problem) {
+  unsigned count = 0;
+  for (auto &field : problem.randFields)
+    count += field.elementCount;
+  return count;
+}
+
+static func::FuncOp emitRandomizeCheckHelper(ModuleOp module,
+                                             OpBuilder &builder,
+                                             ConstraintProblemDesc &problem) {
+  auto name = getRandomizeCheckHelperName(problem.cls);
+  if (auto fn = module.lookupSymbol<func::FuncOp>(name))
+    return fn;
+
+  auto *ctx = module.getContext();
+  auto ptrTy = LLVM::LLVMPointerType::get(ctx);
+  auto i1Ty = IntegerType::get(ctx, 1);
+  auto i64Ty = IntegerType::get(ctx, 64);
+  SmallVector<Type> inputs(1, ptrTy);
+  inputs.append(getCandidateCount(problem), i64Ty);
+
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPointToStart(module.getBody());
+  auto helper = func::FuncOp::create(builder, problem.cls.getLoc(), name,
+                                     builder.getFunctionType(inputs, {i1Ty}));
+  helper.setPrivate();
+  auto *body = helper.addEntryBlock();
+  builder.setInsertionPointToEnd(body);
+
+  SmallVector<Value> candidates(body->args_begin() + 1, body->args_end());
+  PredicateEmitter emitter(builder, problem.cls.getLoc(), problem, candidates);
+  ConstraintExprLowerer<PredicateEmitter> lowerer(emitter);
+
+  Value result = arith::ConstantOp::create(builder, problem.cls.getLoc(),
+                                           builder.getBoolAttr(true));
+  for (auto block : problem.constraints) {
+    auto *terminator = block.constraint.getBody().front().getTerminator();
+    auto yield = dyn_cast<YieldOp>(terminator);
+    if (!yield) {
+      block.constraint.emitError()
+          << "randomize constraint block must terminate with moore.yield";
+      return {};
+    }
+
+    auto term = lowerer.lower(yield.getOperand());
+    if (failed(term))
+      return {};
+    result = *term;
+  }
+
+  func::ReturnOp::create(builder, problem.cls.getLoc(), result);
+  return helper;
+}
+
 static LogicalResult emitRandomizeHelper(ModuleOp module, OpBuilder &builder,
                                          ConstraintProblemDesc &problem) {
   if (problem.randFields.empty())
@@ -328,9 +611,12 @@ static LogicalResult emitRandomizeHelper(ModuleOp module, OpBuilder &builder,
   auto ptrTy = LLVM::LLVMPointerType::get(ctx);
   auto i1Ty = IntegerType::get(ctx, 1);
   auto runtime = getOrCreateSolverRuntime(module, builder);
+  auto checkHelper = emitRandomizeCheckHelper(module, builder, problem);
+  if (!checkHelper)
+    return failure();
 
   OpBuilder::InsertionGuard guard(builder);
-  builder.setInsertionPointToStart(module.getBody());
+  builder.setInsertionPointAfter(checkHelper);
   auto helper = func::FuncOp::create(builder, problem.cls.getLoc(), name,
                                      builder.getFunctionType({ptrTy}, {i1Ty}));
   helper.setPrivate();
@@ -340,8 +626,9 @@ static LogicalResult emitRandomizeHelper(ModuleOp module, OpBuilder &builder,
   auto solver = func::CallOp::create(builder, problem.cls.getLoc(),
                                      runtime.create, ValueRange{})
                     .getResult(0);
+  SolverStringCache strings;
   SolverEmitter emitter(module, builder, problem.cls.getLoc(), problem, runtime,
-                        solver);
+                        strings, solver);
   ConstraintExprLowerer<SolverEmitter> lowerer(emitter);
 
   for (auto block : problem.constraints) {
@@ -360,7 +647,35 @@ static LogicalResult emitRandomizeHelper(ModuleOp module, OpBuilder &builder,
   auto solved =
       func::CallOp::create(builder, problem.cls.getLoc(), runtime.check, solver)
           .getResult(0);
-  func::ReturnOp::create(builder, problem.cls.getLoc(), solved);
+  auto *entryBlock = builder.getBlock();
+  auto *crosscheckBlock = builder.createBlock(&helper.getBody());
+  auto *successBlock = builder.createBlock(&helper.getBody());
+  auto *failBlock = builder.createBlock(&helper.getBody());
+  builder.setInsertionPointToEnd(entryBlock);
+  cf::CondBranchOp::create(builder, problem.cls.getLoc(), solved,
+                           crosscheckBlock, failBlock);
+
+  builder.setInsertionPointToEnd(crosscheckBlock);
+  SmallVector<Value> modelValues;
+  modelValues.push_back(body->getArgument(0));
+  emitter.emitModelValues(modelValues);
+  auto crosschecked = func::CallOp::create(builder, problem.cls.getLoc(),
+                                           checkHelper, modelValues)
+                          .getResult(0);
+  cf::CondBranchOp::create(builder, problem.cls.getLoc(), crosschecked,
+                           successBlock, failBlock);
+
+  builder.setInsertionPointToEnd(successBlock);
+  auto trueValue = arith::ConstantOp::create(builder, problem.cls.getLoc(),
+                                             builder.getBoolAttr(true))
+                       .getResult();
+  func::ReturnOp::create(builder, problem.cls.getLoc(), trueValue);
+
+  builder.setInsertionPointToEnd(failBlock);
+  auto falseValue = arith::ConstantOp::create(builder, problem.cls.getLoc(),
+                                              builder.getBoolAttr(false))
+                        .getResult();
+  func::ReturnOp::create(builder, problem.cls.getLoc(), falseValue);
   return success();
 }
 } // namespace
