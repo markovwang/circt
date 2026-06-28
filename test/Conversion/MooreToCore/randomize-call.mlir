@@ -20,5 +20,13 @@ moore.module @m() {
   }
 }
 
-// CHECK: func.func private @__circt_randomize_Packet
+// CHECK-LABEL: func.func private @__circt_randomize_Packet
+// CHECK: call @arcRuntimeSolverGetBv
+// CHECK: llvm.getelementptr
+// CHECK: llvm.store
+// CHECK: call @arcRuntimeSolverDestroy
+// CHECK: return %true
+// CHECK: call @arcRuntimeSolverDestroy
+// CHECK: return %false
+// CHECK-LABEL: hw.module @m
 // CHECK: call @__circt_randomize_Packet

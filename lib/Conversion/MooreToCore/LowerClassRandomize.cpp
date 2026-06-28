@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "circt/Dialect/HW/HWTypes.h"
 #include "circt/Dialect/Moore/MooreOps.h"
 #include "circt/Dialect/Moore/MooreTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -148,6 +149,7 @@ static func::FuncOp getOrCreateRuntimeFunc(ModuleOp module, OpBuilder &builder,
 
 struct SolverRuntime {
   func::FuncOp create;
+  func::FuncOp destroy;
   func::FuncOp bvVar;
   func::FuncOp bvConst;
   func::FuncOp eq;
@@ -168,6 +170,8 @@ static SolverRuntime getOrCreateSolverRuntime(ModuleOp module,
   return {
       getOrCreateRuntimeFunc(module, builder, "arcRuntimeSolverCreate", {},
                              {ptrTy}),
+      getOrCreateRuntimeFunc(module, builder, "arcRuntimeSolverDestroy",
+                             {ptrTy}, {}),
       getOrCreateRuntimeFunc(module, builder, "arcRuntimeSolverBvVar",
                              {ptrTy, ptrTy, i32Ty}, {ptrTy}),
       getOrCreateRuntimeFunc(module, builder, "arcRuntimeSolverBvConst",
@@ -183,6 +187,56 @@ static SolverRuntime getOrCreateSolverRuntime(ModuleOp module,
       getOrCreateRuntimeFunc(module, builder, "arcRuntimeSolverGetBv",
                              {ptrTy, ptrTy}, {i64Ty}),
   };
+}
+
+static LLVM::LLVMStructType getClassObjectHeaderType(MLIRContext *ctx) {
+  return LLVM::LLVMStructType::getLiteral(
+      ctx, SmallVector<Type>{LLVM::LLVMPointerType::get(ctx),
+                             LLVM::LLVMPointerType::get(ctx)});
+}
+
+static Type getStorageType(Type type) {
+  if (auto intTy = dyn_cast<IntType>(type))
+    return IntegerType::get(type.getContext(), intTy.getWidth());
+  if (auto arrayTy = dyn_cast<UnpackedArrayType>(type)) {
+    auto elementType = getStorageType(arrayTy.getElementType());
+    if (!elementType)
+      return {};
+    return hw::ArrayType::get(elementType, arrayTy.getSize());
+  }
+  return {};
+}
+
+static LLVM::LLVMStructType getClassStorageType(ClassDeclOp cls) {
+  auto *ctx = cls.getContext();
+  auto storageType =
+      LLVM::LLVMStructType::getIdentified(ctx, cls.getSymNameAttr());
+  if (!storageType.isOpaque())
+    return storageType;
+
+  SmallVector<Type> members;
+  members.push_back(getClassObjectHeaderType(ctx));
+  for (auto property : cls.getBody().getOps<ClassPropertyDeclOp>()) {
+    auto type = getStorageType(property.getPropertyType());
+    if (!type)
+      continue;
+    members.push_back(type);
+  }
+  (void)storageType.setBody(members, /*isPacked=*/false);
+  return storageType;
+}
+
+static std::optional<unsigned> getScalarPropertyIndex(ClassDeclOp cls,
+                                                      StringRef propertyName) {
+  unsigned index = 1;
+  for (auto property : cls.getBody().getOps<ClassPropertyDeclOp>()) {
+    if (!getStorageType(property.getPropertyType()))
+      continue;
+    if (property.getSymName() == propertyName)
+      return index;
+    ++index;
+  }
+  return std::nullopt;
 }
 
 class SolverStringCache {
@@ -393,6 +447,41 @@ struct SolverEmitter {
   }
 
   void emitAssert(Value term) { callVoid(runtime.assertFn, {solver, term}); }
+
+  void emitCommitScalarFields(Value object, ArrayRef<Value> modelValues) {
+    auto ptrTy = LLVM::LLVMPointerType::get(builder.getContext());
+    auto i32Ty = IntegerType::get(builder.getContext(), 32);
+    auto structTy = getClassStorageType(problem.cls);
+
+    unsigned modelIndex = 0;
+    for (auto &field : problem.randFields) {
+      if (field.isOneDimUnpackedArray) {
+        modelIndex += field.elementCount;
+        continue;
+      }
+
+      auto propertyName = field.property.getSymName();
+      auto propertyIndex = getScalarPropertyIndex(problem.cls, propertyName);
+      if (!propertyIndex) {
+        ++modelIndex;
+        continue;
+      }
+
+      Value value = modelValues[modelIndex++];
+      if (field.bitWidth < 64)
+        value = arith::TruncIOp::create(
+            builder, loc,
+            IntegerType::get(builder.getContext(), field.bitWidth), value);
+
+      Value zero = LLVM::ConstantOp::create(builder, loc, i32Ty,
+                                            builder.getI32IntegerAttr(0));
+      Value fieldIdx = LLVM::ConstantOp::create(
+          builder, loc, i32Ty, builder.getI32IntegerAttr(*propertyIndex));
+      auto fieldPtr = LLVM::GEPOp::create(builder, loc, ptrTy, structTy, object,
+                                          ValueRange{zero, fieldIdx});
+      LLVM::StoreOp::create(builder, loc, value, fieldPtr);
+    }
+  }
 };
 
 struct PredicateEmitter {
@@ -666,12 +755,16 @@ static LogicalResult emitRandomizeHelper(ModuleOp module, OpBuilder &builder,
                            successBlock, failBlock);
 
   builder.setInsertionPointToEnd(successBlock);
+  emitter.emitCommitScalarFields(body->getArgument(0),
+                                 ArrayRef<Value>(modelValues).drop_front());
+  emitter.callVoid(runtime.destroy, solver);
   auto trueValue = arith::ConstantOp::create(builder, problem.cls.getLoc(),
                                              builder.getBoolAttr(true))
                        .getResult();
   func::ReturnOp::create(builder, problem.cls.getLoc(), trueValue);
 
   builder.setInsertionPointToEnd(failBlock);
+  emitter.callVoid(runtime.destroy, solver);
   auto falseValue = arith::ConstantOp::create(builder, problem.cls.getLoc(),
                                               builder.getBoolAttr(false))
                         .getResult();
