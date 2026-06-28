@@ -3416,6 +3416,12 @@ def ClassNewOp
   let hasVerifier = 1;
 }
 
+def ClassRandomizeOp : MooreOp<"class.randomize", []> {
+  let summary = "Randomize a class object";
+  let arguments = (ins ClassHandleType:$object);
+  let results = (outs BitType:$result);
+  let assemblyFormat = "$object attr-dict `:` type($object)";
+}
 
 def ClassPropertyRefOp
     : MooreOp<"class.property_ref", [Pure,

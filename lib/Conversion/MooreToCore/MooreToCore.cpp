@@ -1056,6 +1056,34 @@ struct ClassUpcastOpConversion : public OpConversionPattern<ClassUpcastOp> {
   }
 };
 
+static std::string getRandomizeHelperName(ClassHandleType handleTy) {
+  return (Twine("__circt_randomize_") +
+          handleTy.getClassSym().getRootReference().getValue())
+      .str();
+}
+
+struct ClassRandomizeOpConversion
+    : public OpConversionPattern<ClassRandomizeOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(ClassRandomizeOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto handleTy = cast<ClassHandleType>(op.getObject().getType());
+    auto helperName = getRandomizeHelperName(handleTy);
+    auto module = op->getParentOfType<ModuleOp>();
+    auto helper = module.lookupSymbol<func::FuncOp>(helperName);
+    if (!helper)
+      return op.emitError()
+             << "missing generated randomize helper @" << helperName;
+
+    auto call = func::CallOp::create(rewriter, op.getLoc(), helper,
+                                     adaptor.getObject());
+    rewriter.replaceOp(op, call.getResult(0));
+    return success();
+  }
+};
+
 /// moore.class.new lowering: heap-allocate storage for the class object.
 struct ClassNewOpConversion : public OpConversionPattern<ClassNewOp> {
   ClassNewOpConversion(TypeConverter &tc, MLIRContext *ctx,
@@ -3472,6 +3500,8 @@ static void populateOpConversion(ConversionPatternSet &patterns,
                                       classCache);
   patterns.add<ClassNewOpConversion>(typeConverter, patterns.getContext(),
                                      classCache, funcCache);
+  patterns.add<ClassRandomizeOpConversion>(typeConverter,
+                                           patterns.getContext());
   patterns.add<ClassPropertyRefOpConversion>(typeConverter,
                                              patterns.getContext(), classCache);
 

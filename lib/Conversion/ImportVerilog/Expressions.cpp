@@ -3262,6 +3262,21 @@ Value Context::convertSystemCall(
 
   // $urandom, $random, and $urandom_range all map to a single
   // moore.builtin.urandom_range primitive with (minval, maxval, seed).
+  if (name == "randomize") {
+    if (numArgs != 1) {
+      emitError(loc) << "unsupported randomize call with inline constraints";
+      return {};
+    }
+    auto object = convertRvalueExpression(*args[0]);
+    if (!object)
+      return {};
+    if (!isa<moore::ClassHandleType>(object.getType())) {
+      emitError(loc) << "randomize is only supported on class handles";
+      return {};
+    }
+    return moore::ClassRandomizeOp::create(builder, loc, object);
+  }
+
   if (nameId == ksn::URandom || nameId == ksn::Random) {
     auto i32Ty = moore::IntType::getInt(builder.getContext(), 32);
     auto minval = moore::ConstantOp::create(builder, loc, i32Ty, 0);
