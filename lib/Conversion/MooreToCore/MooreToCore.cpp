@@ -48,6 +48,11 @@ using namespace moore;
 using comb::ICmpPredicate;
 using llvm::SmallDenseSet;
 
+namespace circt {
+LogicalResult prepareClassRandomizeSupport(ModuleOp module,
+                                           SymbolTable &symbolTable);
+} // namespace circt
+
 namespace {
 
 /// Cache for identified structs and field GEP paths keyed by class symbol.
@@ -3703,6 +3708,11 @@ void MooreToCorePass::runOnOperation() {
   MLIRContext &context = getContext();
   ModuleOp module = getOperation();
   ClassTypeCache classCache;
+
+  SymbolTable randomizeSymbolTable(module);
+  if (failed(circt::prepareClassRandomizeSupport(module, randomizeSymbolTable)))
+    return signalPassFailure();
+
   auto &symbolTable = getAnalysis<SymbolTable>();
   FunctionCache funcCache(symbolTable);
 

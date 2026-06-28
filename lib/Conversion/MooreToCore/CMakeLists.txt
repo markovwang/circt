@@ -1,4 +1,5 @@
 add_circt_conversion_library(CIRCTMooreToCore
+  LowerClassRandomize.cpp
   MooreToCore.cpp
 
   DEPENDS
