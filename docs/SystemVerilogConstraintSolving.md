@@ -1,9 +1,10 @@
 # SystemVerilog Constraint Solving
 
-This note records follow-up work for full SystemVerilog class constraint
-support in the Verilog front-end. The current first milestone imports class
-constraint blocks into Moore IR and preserves simple predicate bodies, but it
-does not implement `randomize()`, constraint solving, or runtime behavior.
+This note records follow-up work for SystemVerilog class constraint support in
+the Verilog front-end and the arcilator-oriented runtime path. The current
+implementation imports class constraint blocks into Moore IR, preserves simple
+predicate bodies, imports basic `randomize()` calls, and lowers a small
+constraint subset to runtime Bitwuzla wrapper calls.
 
 ## Current Milestone
 
@@ -12,27 +13,86 @@ The importer accepts class constraint declarations and represents them as
 Simple expression constraints and lists are preserved as predicate regions.
 Unsupported constraint forms are diagnosed instead of being accepted silently.
 
-This is intentionally an IR-preservation step. It should not be interpreted as
-solver support, arcilator support, or SystemVerilog randomization semantics.
+This is no longer only an IR-preservation step, but it is still not full
+SystemVerilog randomization semantics. Model writeback, runtime mode handling,
+seed/replay, inline `with` constraints, and most constraint features remain
+future work.
+
+## Implementation Progress
+
+The current branch has completed the first arcilator-oriented skeleton for class
+constraint solving:
+
+- Moore preserves `rand` and `randc` class property metadata.
+- ImportVerilog preserves simple class constraint blocks and imports simple
+  object `randomize()` calls.
+- Arc runtime exposes an optional Bitwuzla-backed C ABI.
+- MooreToCore creates hidden `rand_mode` and `constraint_mode` storage fields.
+- MooreToCore emits generated runtime helpers that build solver calls for a
+  small constraint subset.
+- 1-dim unpacked arrays are represented as one solver bit-vector variable per
+  element.
+- A generated predicate helper crosschecks solver model values before the
+  randomize helper reports success.
+
+This is still a skeleton for runtime solving. The major missing piece is model
+commit: solver model values are not yet written back into object fields.
+Runtime reads of `rand_mode` and `constraint_mode` are also not wired yet.
+
+## Commit Map
+
+- `1c86a06ee` `[Arc] Add optional constraint solver runtime hook`
+  - Adds `CIRCT_ARC_ENABLE_BITWUZLA_RANDOMIZE`.
+  - Adds `ConstraintSolver.h` and disabled fallback runtime entry points.
+  - Wires `ConstraintSolver.cpp` into Arc runtime builds.
+- `027016cba` `[Arc] Implement Bitwuzla constraint solver wrapper`
+  - Implements the enabled Bitwuzla-backed runtime wrapper.
+  - Adds API coverage for variables, constants, equality, signed greater-than,
+    assertions, solver checks, and model extraction.
+  - Adds Arc runtime unit coverage for availability.
+- `0140f2bc6` `[Moore] Preserve class rand property metadata`
+  - Adds `isRand` and `isRandC` metadata to Moore class property declarations.
+  - Teaches ImportVerilog to preserve `rand`/`randc` on class properties.
+  - Extends ImportVerilog constraint tests.
+- `9229b2bc2` `[MooreToCore] Prepare class randomize lowering`
+  - Adds `LowerClassRandomize.cpp`.
+  - Collects local class randomize descriptors.
+  - Inserts hidden mode fields for rand fields and constraint blocks.
+  - Wires the preparation step into `--convert-moore-to-core`.
+- `bb98d4a2a` `[MooreToCore] Lower randomize constraints to solver calls`
+  - Emits private `__circt_randomize_<Class>` helpers.
+  - Declares solver runtime functions in generated IR.
+  - Lowers constants, class property reads, equality, and signed
+    greater-than to solver calls.
+  - Adds unsupported-operation diagnostics.
+- `050beaf8b` `[MooreToCore] Crosscheck randomize solver models`
+  - Adds one solver variable per 1-dim unpacked array element.
+  - Rejects variable-index array access in constraints.
+  - Generates `__circt_randomize_check_<Class>` predicate helpers.
+  - Calls the predicate helper after solver SAT to validate model values.
+- `47aa4852b` `[ImportVerilog] Import class randomize calls`
+  - Adds `moore.class.randomize`.
+  - Imports simple object `randomize()` calls from SystemVerilog.
+  - Lowers `moore.class.randomize` to the generated randomize helper.
+  - Adds ImportVerilog and MooreToCore randomize-call tests.
 
 ## Known Follow-Up Gaps
 
-Before building solver behavior on top of the first milestone, resolve these
-IR preservation issues:
+Before building solver behavior on top of the first milestone, keep the
+remaining IR preservation boundaries explicit:
 
-- Constraint body symbol visibility: constraint bodies currently sit in their
-  own nested operation. Any representation that isolates the body must still let
-  all symbol users resolve class-level and module-level symbols, including
-  static class properties, inherited properties, globals, and helper ops such as
-  class upcasts. Do not rely on one-off fallbacks for only one op kind.
-- Extern constraint definitions: out-of-block definitions such as
-  `constraint Packet::c_len { ... }` need an explicit import strategy. Either
-  attach the external body to the class constraint declaration or diagnose that
-  this form is not supported yet. Silently keeping only an empty extern
-  declaration is incomplete IR.
+- Done: constraint body symbol visibility. Constraint bodies sit in their own
+  nested operation, but symbol users inside the body must still resolve
+  class-level and module-level symbols, including static class properties,
+  inherited properties, globals, and helper ops such as class upcasts.
+- Open: extern constraint definitions. Out-of-block definitions such as
+  `constraint Packet::c_len { ... }` currently diagnose as unsupported. A future
+  preservation milestone may attach the external body to the class constraint
+  declaration instead.
 
-These are preservation problems, not solver problems. They should be fixed
-before another thread starts implementing `randomize()` or solver lowering.
+These are preservation problems, not solver problems. Unsupported preservation
+cases should continue to fail with precise diagnostics rather than silently
+degrading into incomplete IR.
 
 ## Solver Scope
 
@@ -60,6 +120,13 @@ Keep parsed constraints in Moore IR as the source-level representation, then add
 a separate lowering or analysis step that extracts a solver problem from a class
 type and a specific `randomize()` call site.
 
+The actual solving path should be SMT-backed, targeting bit-vector solvers such
+as Bitwuzla rather than a hand-written enumerator as the long-term engine.
+SystemVerilog features that are not native SMT theory, such as `solve before`
+ordering and `dist` weights, should be represented explicitly and implemented
+through deterministic problem construction, solver queries, and post-processing
+layers around the SMT backend.
+
 The solver-facing representation should separate:
 
 - Random variables and their domains.
@@ -76,22 +143,142 @@ testable. Avoid embedding solver assumptions in the importer; the importer
 should continue to preserve source structure and report unsupported source
 forms precisely.
 
-## Implementation Stages
+Backend integration should initially target arcilator and simulation
+verification flows. Avoid making the second lowering path broader than needed:
+trying to serve every possible backend will introduce design trade-offs that
+are not justified by the current use case.
 
-1. Add a solver problem representation independent of any backend runtime.
-2. Lower a small subset of Moore class constraints into that representation:
-   integer `rand` fields, equality, relational operators, and ranges.
-3. Implement deterministic candidate generation for simple finite integer
-   domains.
-4. Wire `randomize()` to build and solve a problem for one object instance.
-5. Add support for inline `with` constraints.
-6. Add solve ordering, soft constraints, distribution weights, and inheritance
-   rules.
-7. Decide whether arcilator should interpret solver IR directly or call into a
-   runtime helper.
+## Implemented Randomize Subset
 
-Each stage should include negative tests for unsupported SystemVerilog features
-so unsupported forms do not silently degrade into incomplete behavior.
+- Backend target: arcilator-style simulation runtime helpers.
+- Solver path: optional Bitwuzla-backed Arc runtime wrapper.
+- Imported call form: simple object `randomize()` calls without inline `with`
+  constraints.
+- Supported rand fields: integral scalar `rand` fields and 1-dim unpacked
+  arrays of integral elements.
+- Array lowering: one solver bit-vector variable per unpacked array element.
+- Supported constraint expressions: constants, class property reads, constant
+  array element reads, equality, and signed greater-than.
+- Result validation: generated predicate helpers re-evaluate lowered
+  constraints over solver model values before the helper reports success.
+- Runtime mode storage: hidden `rand_mode` and `constraint_mode` fields are
+  created in class storage, but runtime enable/disable behavior is not wired
+  yet.
+
+Unsupported forms should diagnose instead of being silently ignored. Candidate
+value writeback into object fields is still pending, so the current path should
+be treated as a solver-call and validation skeleton rather than a complete
+SystemVerilog `randomize()` implementation.
+
+## Audit TODO List
+
+Track follow-up work in this order:
+
+1. Stabilize remaining IR preservation boundaries.
+   - Keep extern constraint definitions diagnosed as unsupported until there is
+     a body-attachment strategy.
+   - Add negative tests for every newly encountered unsupported constraint form.
+2. Add a solver problem representation independent of arcilator or any backend
+   runtime.
+   - Represent random variables, finite domains, hard predicates, object inputs,
+     solve results, and failure.
+   - Keep the representation SMT-oriented so the supported subset lowers cleanly
+     to bit-vector solver queries.
+   - Do not embed solver assumptions in the Verilog importer.
+3. Lower a minimal Moore constraint subset into the solver problem.
+   - Start with integer `rand` fields, class property reads, inherited property
+     reads, literals, comparisons, equality, inequality, and boolean `and`.
+   - Reject unsupported Moore operations with diagnostics.
+4. Implement a deterministic minimal SMT solver backend.
+   - Start with a Bitwuzla-class bit-vector backend for simple finite integer
+     domains.
+   - Cover satisfiable and unsatisfiable problems.
+5. Wire `randomize()` for one object instance.
+   - Build a problem from the object class and active constraints.
+   - Return success or failure explicitly.
+   - Define and test object-state behavior on solve failure.
+6. Add deterministic seed and replay behavior.
+   - Repeated runs with the same seed should produce the same result.
+   - Tests should check invariants and replay, not one arbitrary random value.
+7. Add inline `with` constraints.
+   - Treat them as call-site runtime inputs to problem construction.
+   - Keep unsupported inline forms diagnostic.
+8. Add `constraint_mode`.
+   - Model runtime constraint enablement before expanding more constraint
+     syntax.
+9. Expand SystemVerilog constraint semantics incrementally.
+   - Add inheritance override rules, `solve before`, `soft`, `disable soft`,
+     `dist`, implication, conditionals, `foreach`, `unique`, `randc`, and wider
+     aggregate cases one feature at a time.
+   - Implement non-SMT-native features, such as `solve before` and `dist`,
+     through explicit extensions around SMT problem construction and result
+     selection.
+10. Integrate with arcilator-oriented simulation flows.
+    - Prefer designs that serve arcilator and simulation verification directly.
+    - Choose whether arcilator interprets solver IR directly, lowers to runtime
+      helpers, or calls a solver backend.
+    - Avoid broad generic backend commitments unless a concrete use case
+      justifies the trade-off.
+
+Each stage should include positive tests for supported behavior and negative
+tests for unsupported SystemVerilog features so unsupported forms do not
+silently degrade into incomplete behavior.
+
+## Audit TODO List (Chinese)
+
+求解路径应以 SMT solver 为基础，目标是 Bitwuzla 这类 bit-vector solver，
+而不是长期依赖手写枚举器。`solve before`、`dist` 等 SMT theory 不原生
+支持的 SystemVerilog 语义，应在 SMT problem construction、solver query
+和 result selection 周围通过显式扩展层实现。
+
+再次 lowering 的后端集成应优先面向 arcilator 和仿真验证流程。不要一开始
+把目标扩展成通用后端方案；做大做全会引入不必要的设计 trade-off。
+
+后续 audit 建议按下面顺序推进：
+
+1. 稳定剩余 IR preservation 边界。
+   - 在有明确 body-attachment 策略之前，继续把 extern constraint
+     definitions 诊断为 unsupported。
+   - 每遇到一个新的 unsupported constraint form，都补对应负向测试。
+2. 添加独立于 arcilator 和任何后端 runtime 的 solver problem 表示。
+   - 表达随机变量、有限 domain、hard predicate、对象输入、求解结果和失败。
+   - 让该表示面向 SMT，保证已支持子集可以清晰 lowering 到 bit-vector
+     solver query。
+   - 不要把 solver 假设塞进 Verilog importer。
+3. 把最小 Moore constraint 子集 lowering 到 solver problem。
+   - 从 integer `rand` 字段、class property read、继承 property read、
+     literal、比较、相等、不等和 boolean `and` 开始。
+   - 对 unsupported Moore op 产生明确诊断。
+4. 实现 deterministic minimal SMT solver backend。
+   - 先使用 Bitwuzla 这类 bit-vector backend 覆盖简单有限整数 domain。
+   - 覆盖 satisfiable 和 unsatisfiable 两类问题。
+5. 接入单个 object instance 的 `randomize()`。
+   - 从对象 class 和 active constraints 构造 problem。
+   - 明确返回 success 或 failure。
+   - 定义并测试 solve failure 时的 object state 行为。
+6. 添加 deterministic seed / replay 行为。
+   - 同一个 seed 重复运行应得到相同结果。
+   - 测试应检查 invariant 和 replay，不要依赖某一个任意随机值。
+7. 添加 inline `with` constraints。
+   - 把它们作为 call-site runtime inputs 参与 problem construction。
+   - 对 unsupported inline form 保持明确诊断。
+8. 添加 `constraint_mode`。
+   - 在扩展更多 constraint syntax 之前，先建模 runtime constraint
+     enablement。
+9. 逐步扩展 SystemVerilog constraint semantics。
+   - 按功能逐项添加 inheritance override rules、`solve before`、`soft`、
+     `disable soft`、`dist`、implication、conditional、`foreach`、`unique`、
+     `randc` 和更宽的 aggregate case。
+   - 对 `solve before`、`dist` 这类 SMT theory 不原生支持的语义，通过 SMT
+     problem construction 和 result selection 周围的显式扩展层实现。
+10. 集成到面向 arcilator 的仿真验证流程。
+    - 优先服务 arcilator 和 simulation verification。
+    - 选择 arcilator 直接解释 solver IR、lower 到 runtime helper，或调用
+      solver backend。
+    - 除非有明确用例，否则避免承诺宽泛的通用后端设计。
+
+每个阶段都应包含正向测试和负向测试，确保 supported behavior 稳定，同时
+unsupported SystemVerilog feature 不会静默退化成不完整 IR。
 
 ## Testing Expectations
 
@@ -100,7 +287,8 @@ coverage includes:
 
 - Generated Moore IR for constraint declarations remains stable.
 - Unsupported constraint kinds produce specific diagnostics.
-- `randomize()` remains unsupported until the stage that implements it.
+- `randomize()` imports to Moore IR and lowers to the generated helper for the
+  currently supported subset.
 - Once `randomize()` is implemented, repeated runs with the same seed are
   deterministic.
 - Failed randomization leaves object state consistent with SystemVerilog
