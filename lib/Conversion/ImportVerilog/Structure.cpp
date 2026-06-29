@@ -2703,18 +2703,8 @@ struct ClassMethodVisitor : ClassDeclVisitorBase {
 
   // Fully-fledged functions - SubroutineSymbol
   LogicalResult visit(const slang::ast::SubroutineSymbol &fn) {
-    if (fn.flags & slang::ast::MethodFlags::BuiltIn) {
-      static bool remarkEmitted = false;
-      if (remarkEmitted)
-        return success();
-
-      mlir::emitRemark(classLowering.op.getLoc())
-          << "Class builtin functions (needed for randomization, "
-             "constraint_mode, and covergroups) are not yet supported and "
-             "will be dropped during lowering.";
-      remarkEmitted = true;
+    if (fn.flags & slang::ast::MethodFlags::BuiltIn)
       return success();
-    }
 
     const mlir::UnitAttr isVirtual =
         (fn.flags & slang::ast::MethodFlags::Virtual)
