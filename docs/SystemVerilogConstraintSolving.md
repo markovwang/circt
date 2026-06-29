@@ -39,9 +39,11 @@ constraint solving:
 - Randomize helpers destroy the solver on success and failure paths.
 - A minimal SV compile-flow test now checks `circt-verilog --ir-moore` and the
   `circt-verilog --ir-moore | circt-opt --convert-moore-to-core` lowering path.
-- The Bitwuzla-enabled runtime/tool build has been verified with the installed
-  `/usr/local` Bitwuzla prefix using `ninja -C build-bitwuzla -j12
-  CIRCTArcRuntime CIRCTArcJITRuntime circt-opt`.
+- The Bitwuzla-enabled runtime/tool build has been verified with the existing
+  `build-bitwuzla` cache using `ninja -C build-bitwuzla -j12
+  CIRCTArcRuntime CIRCTArcJITRuntime circt-opt`. That cache currently resolves
+  Bitwuzla from `/home/markov/Project/bitwuzla`; fresh builds should prefer the
+  installed `/usr/local` prefix.
 
 This is still a skeleton for runtime solving. The major missing piece is model
 coverage for aggregates: 1-dim unpacked array values are solved and
@@ -189,8 +191,10 @@ are not justified by the current use case.
 - Runtime mode storage: hidden `rand_mode` and `constraint_mode` fields are
   created in class storage, but runtime enable/disable behavior is not wired
   yet.
-- Build verification: the enabled Bitwuzla path builds against the installed
-  `/usr/local` prefix for Arc runtime libraries and `circt-opt`.
+- Build verification: the enabled Bitwuzla path builds for Arc runtime
+  libraries and `circt-opt`. The verified `build-bitwuzla` cache uses the local
+  Bitwuzla checkout; the project also has Bitwuzla installed under
+  `/usr/local` for fresh configurations.
 
 Unsupported forms should diagnose instead of being silently ignored. The current
 path is enough for a scalar-rand demo skeleton, but it is not a complete

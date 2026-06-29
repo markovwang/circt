@@ -21,7 +21,7 @@ Status as of commit `477086351`:
 - Task 7 complete for code/tests: simple object `randomize()` imports to Moore IR and lowers to the generated helper.
 - Post-plan demo step complete: scalar integral `rand` model values are committed back into object storage after crosscheck succeeds, and solver cleanup is emitted on success/failure paths.
 - Compile-flow demo complete: a minimal SV file now checks `circt-verilog --ir-moore` and `circt-verilog --ir-moore | circt-opt --convert-moore-to-core`.
-- Bitwuzla-enabled build/link verification complete with the installed `/usr/local` Bitwuzla prefix: `ninja -C build-bitwuzla -j12 CIRCTArcRuntime CIRCTArcJITRuntime circt-opt` passed.
+- Bitwuzla-enabled build/link verification complete in `build-bitwuzla`: `ninja -C build-bitwuzla -j12 CIRCTArcRuntime CIRCTArcJITRuntime circt-opt` passed. The current cache still resolves Bitwuzla from `/home/markov/Project/bitwuzla`, not `/usr/local`.
 
 Remaining implementation gaps:
 
@@ -49,7 +49,8 @@ expression coverage, inline `with`, and seed/replay until this path is working.
    - Narrow the old "randomization not supported" diagnostic so this supported simple call does not produce misleading output.
 
 3. **Done: verify the Bitwuzla-enabled runtime build/link path.**
-   - Use the installed Bitwuzla prefix at `/usr/local`.
+   - Verified the existing `build-bitwuzla` cache, which currently resolves Bitwuzla from `/home/markov/Project/bitwuzla`.
+   - For a fresh build, prefer the installed Bitwuzla prefix at `/usr/local`.
    - Build the minimal targets needed for `bin/circt-opt` and the Arc runtime.
    - Keep the local Bitwuzla path out of generic tests and CMake defaults.
    - Confirm the disabled fallback build still works.
@@ -124,6 +125,51 @@ expression coverage, inline `with`, and seed/replay until this path is working.
   - Checks that a minimal SV class `randomize()` call imports to `moore.class.randomize`.
   - Checks that the same SV source lowers through `--convert-moore-to-core` to solver create, variable creation, assertion, check, model extraction, scalar writeback, and solver cleanup.
   - Narrows the old frontend "not supported" remark so supported builtin class methods do not produce a misleading diagnostic.
+
+## Build Commands
+
+Current verified build command:
+
+```sh
+ninja -C build-bitwuzla -j12 CIRCTArcRuntime CIRCTArcJITRuntime circt-opt
+```
+
+The current `build-bitwuzla` cache is configured with `LLVM_ENABLE_LLD=ON` and
+the actual `circt-opt` link command includes `-fuse-ld=lld`; `CMAKE_LINKER`
+still prints `/usr/bin/ld` because the compiler driver selects lld through the
+flag. Executable links are therefore using lld. Static library archive steps
+still use `ar`/`ranlib`.
+
+The current cache resolves Bitwuzla from the local checkout:
+
+```text
+Bitwuzla_INCLUDE_DIR=/home/markov/Project/bitwuzla/include
+Bitwuzla_LIBRARY=/home/markov/Project/bitwuzla/build/src/libbitwuzla.a
+```
+
+For a fresh build against the installed `/usr/local` Bitwuzla prefix, use:
+
+```sh
+PKG_CONFIG_PATH=/usr/local/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH} \
+cmake -G Ninja llvm/llvm -B build-bitwuzla \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DLLVM_ENABLE_ASSERTIONS=ON \
+  -DLLVM_TARGETS_TO_BUILD=host \
+  -DLLVM_ENABLE_PROJECTS=mlir \
+  -DLLVM_EXTERNAL_PROJECTS=circt \
+  -DLLVM_EXTERNAL_CIRCT_SOURCE_DIR=$PWD \
+  -DLLVM_ENABLE_LLD=ON \
+  -DCIRCT_ARC_ENABLE_BITWUZLA_RANDOMIZE=ON
+```
+
+Memory-friendly incremental build command:
+
+```sh
+ninja -C build-bitwuzla -j8 CIRCTArcRuntime CIRCTArcJITRuntime circt-opt
+```
+
+Use `-j12` only when the machine is healthy; use `-j8` or lower if link memory
+pressure is visible.
 
 ## Global Constraints
 
