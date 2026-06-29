@@ -10,7 +10,7 @@
 
 ## Implementation Status
 
-Status as of commit `c6c5566fd`:
+Status as of commit `7a4033ef7` (code state through `c6c5566fd`):
 
 - Task 1 complete: optional Arc runtime solver hook.
 - Task 2 complete: Bitwuzla-backed runtime wrapper.
@@ -29,6 +29,52 @@ Remaining implementation gaps:
 - Deterministic seed/replay behavior is not implemented.
 - Constraint expression support is still narrow: constants, class property reads, constant array element reads, equality, and signed greater-than.
 - Unsupported SV constraint features must keep producing diagnostics instead of partial behavior.
+
+## Next Work Order
+
+This is the lean path to a minimal arcilator-oriented demo. Defer broad
+expression coverage, inline `with`, and seed/replay until this path is working.
+
+1. **Push the current branch state.**
+   - The branch is currently ahead of `origin/codex-sv-class-constraints` by two commits.
+   - Push `c6c5566fd` and `7a4033ef7` before starting new implementation so other agents can continue from the same state.
+
+2. **Add a compile-flow demo from SV to runtime solver calls.**
+   - Add or extend a lit test that runs `circt-verilog --ir-moore` and pipes into `circt-opt --convert-moore-to-core`.
+   - Use a minimal class with one scalar integral `rand` field, one simple constraint such as `x > 0`, and one plain `obj.randomize()` call.
+   - Check that ImportVerilog emits `moore.class.randomize`.
+   - Check that MooreToCore emits `__circt_randomize_<Class>` with solver create, bit-vector variable creation, constraint assertion, solver check, model extraction, scalar writeback, and solver destroy.
+   - Narrow the old "randomization not supported" diagnostic so this supported simple call does not produce misleading output.
+
+3. **Verify the Bitwuzla-enabled runtime build/link path.**
+   - Use the local Bitwuzla checkout at `/home/markov/Project/bitwuzla`.
+   - Build the minimal targets needed for `bin/circt-opt` and the Arc runtime.
+   - Keep the local Bitwuzla path out of generic tests and CMake defaults.
+   - Confirm the disabled fallback build still works.
+
+4. **Spike the actual arcilator execution path.**
+   - Try to feed the compile-flow demo output into the existing arcilator flow.
+   - If it works, turn that command into the first execution demo.
+   - If it does not work, document the concrete blocker and the smallest adapter or harness that would be needed.
+   - Do not build a general backend abstraction for this spike.
+
+5. **Commit 1-dim unpacked array model values back to object storage.**
+   - Reuse the existing per-element solver variables and crosscheck path.
+   - Extract each element model value and store it back into the corresponding object field element.
+   - Keep variable-index array access unsupported.
+   - Add FileCheck coverage for per-element model extraction and per-element store.
+
+6. **Make `rand_mode` and `constraint_mode` affect solving.**
+   - Skip assertion of constraint blocks whose `constraint_mode` is disabled.
+   - Do not write back fields whose `rand_mode` is disabled.
+   - For combinations that v1 cannot model correctly, emit an unsupported diagnostic rather than partial behavior.
+   - Add tests for disabled constraint blocks, disabled rand fields, and unsupported mixed cases.
+
+7. **Backlog after the minimal demo path works.**
+   - Add expression operators only as needed by concrete tests: likely `!=`, `&&`, signed `< <= >=`, and simple `+` / `-`.
+   - Add inline `with` constraints after the mode behavior is stable.
+   - Add deterministic seed/replay after there is a real execution demo to replay.
+   - Keep dynamic arrays, queues, associative arrays, multidim unpacked arrays, strings, reals, class handles, and object graph constraints unsupported for now.
 
 ## Commit Map
 
@@ -68,6 +114,9 @@ Remaining implementation gaps:
   - Emits scalar integral rand-field writeback after solver SAT and predicate crosscheck.
   - Emits `arcRuntimeSolverDestroy` on success and failure paths.
   - Extends `randomize-call.mlir` to check model extraction, field store, and solver cleanup.
+- `7a4033ef7` `[Docs] Update randomize writeback status`
+  - Records scalar writeback as complete in the plan and user-facing constraint solving documentation.
+  - Keeps array writeback, mode reads, inline constraints, seed/replay, and expression coverage as remaining work.
 
 ## Global Constraints
 
