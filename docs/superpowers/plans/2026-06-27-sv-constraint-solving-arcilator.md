@@ -10,7 +10,7 @@
 
 ## Implementation Status
 
-Status as of commit `7a4033ef7` (code state through `c6c5566fd`):
+Status as of commit `477086351`:
 
 - Task 1 complete: optional Arc runtime solver hook.
 - Task 2 complete: Bitwuzla-backed runtime wrapper.
@@ -20,6 +20,8 @@ Status as of commit `7a4033ef7` (code state through `c6c5566fd`):
 - Task 6 complete: 1-dim unpacked array solver variables and generated predicate crosscheck helper.
 - Task 7 complete for code/tests: simple object `randomize()` imports to Moore IR and lowers to the generated helper.
 - Post-plan demo step complete: scalar integral `rand` model values are committed back into object storage after crosscheck succeeds, and solver cleanup is emitted on success/failure paths.
+- Compile-flow demo complete: a minimal SV file now checks `circt-verilog --ir-moore` and `circt-verilog --ir-moore | circt-opt --convert-moore-to-core`.
+- Bitwuzla-enabled build/link verification complete with the installed `/usr/local` Bitwuzla prefix: `ninja -C build-bitwuzla -j12 CIRCTArcRuntime CIRCTArcJITRuntime circt-opt` passed.
 
 Remaining implementation gaps:
 
@@ -36,18 +38,18 @@ This is the lean path to a minimal arcilator-oriented demo. Defer broad
 expression coverage, inline `with`, and seed/replay until this path is working.
 
 1. **Push the current branch state.**
-   - The branch is currently ahead of `origin/codex-sv-class-constraints` by two commits.
-   - Push `c6c5566fd` and `7a4033ef7` before starting new implementation so other agents can continue from the same state.
+   - The branch is currently ahead of `origin/codex-sv-class-constraints` by the compile-flow commit `477086351` plus any newer documentation-only progress commits.
+   - Push before handing work to another agent so other agents can continue from the same state.
 
-2. **Add a compile-flow demo from SV to runtime solver calls.**
+2. **Done: add a compile-flow demo from SV to runtime solver calls.**
    - Add or extend a lit test that runs `circt-verilog --ir-moore` and pipes into `circt-opt --convert-moore-to-core`.
    - Use a minimal class with one scalar integral `rand` field, one simple constraint such as `x > 0`, and one plain `obj.randomize()` call.
    - Check that ImportVerilog emits `moore.class.randomize`.
    - Check that MooreToCore emits `__circt_randomize_<Class>` with solver create, bit-vector variable creation, constraint assertion, solver check, model extraction, scalar writeback, and solver destroy.
    - Narrow the old "randomization not supported" diagnostic so this supported simple call does not produce misleading output.
 
-3. **Verify the Bitwuzla-enabled runtime build/link path.**
-   - Use the local Bitwuzla checkout at `/home/markov/Project/bitwuzla`.
+3. **Done: verify the Bitwuzla-enabled runtime build/link path.**
+   - Use the installed Bitwuzla prefix at `/usr/local`.
    - Build the minimal targets needed for `bin/circt-opt` and the Arc runtime.
    - Keep the local Bitwuzla path out of generic tests and CMake defaults.
    - Confirm the disabled fallback build still works.
@@ -117,6 +119,11 @@ expression coverage, inline `with`, and seed/replay until this path is working.
 - `7a4033ef7` `[Docs] Update randomize writeback status`
   - Records scalar writeback as complete in the plan and user-facing constraint solving documentation.
   - Keeps array writeback, mode reads, inline constraints, seed/replay, and expression coverage as remaining work.
+- `477086351` `[ImportVerilog] Test randomize compile flow`
+  - Adds `test/Conversion/ImportVerilog/randomize-flow.sv`.
+  - Checks that a minimal SV class `randomize()` call imports to `moore.class.randomize`.
+  - Checks that the same SV source lowers through `--convert-moore-to-core` to solver create, variable creation, assertion, check, model extraction, scalar writeback, and solver cleanup.
+  - Narrows the old frontend "not supported" remark so supported builtin class methods do not produce a misleading diagnostic.
 
 ## Global Constraints
 

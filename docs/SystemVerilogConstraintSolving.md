@@ -37,6 +37,11 @@ constraint solving:
 - Scalar integral `rand` field model values are committed back into object
   storage after crosscheck succeeds.
 - Randomize helpers destroy the solver on success and failure paths.
+- A minimal SV compile-flow test now checks `circt-verilog --ir-moore` and the
+  `circt-verilog --ir-moore | circt-opt --convert-moore-to-core` lowering path.
+- The Bitwuzla-enabled runtime/tool build has been verified with the installed
+  `/usr/local` Bitwuzla prefix using `ninja -C build-bitwuzla -j12
+  CIRCTArcRuntime CIRCTArcJITRuntime circt-opt`.
 
 This is still a skeleton for runtime solving. The major missing piece is model
 coverage for aggregates: 1-dim unpacked array values are solved and
@@ -86,6 +91,12 @@ crosschecked, but not written back yet. Runtime reads of `rand_mode` and
     paths.
   - Extends the randomize-call test to check model extraction, field store, and
     solver destruction.
+- `477086351` `[ImportVerilog] Test randomize compile flow`
+  - Adds a minimal SV-to-Moore-to-Core randomize flow test.
+  - Checks frontend import of `moore.class.randomize` and lowering to solver
+    calls, model extraction, scalar writeback, and solver cleanup.
+  - Narrows the old frontend "randomization not supported" remark for supported
+    builtin class methods.
 
 ## Known Follow-Up Gaps
 
@@ -178,6 +189,8 @@ are not justified by the current use case.
 - Runtime mode storage: hidden `rand_mode` and `constraint_mode` fields are
   created in class storage, but runtime enable/disable behavior is not wired
   yet.
+- Build verification: the enabled Bitwuzla path builds against the installed
+  `/usr/local` prefix for Arc runtime libraries and `circt-opt`.
 
 Unsupported forms should diagnose instead of being silently ignored. The current
 path is enough for a scalar-rand demo skeleton, but it is not a complete
