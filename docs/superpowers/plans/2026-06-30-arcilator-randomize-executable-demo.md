@@ -88,7 +88,7 @@ Do not add an `arcilator --emit-executable` option in this milestone.
   - lit substitution `%circt_arc_runtime_lib`.
   - lit substitution `%bitwuzla_randomize_link_flags`.
 
-- [ ] **Step 1: Add CMake values to lit site config**
+- [x] **Step 1: Add CMake values to lit site config**
 
   In `test/lit.site.cfg.py.in`, after `config.libfst_enabled = @CIRCT_LIBFST_ENABLED@`, add:
 
@@ -98,7 +98,7 @@ Do not add an `arcilator --emit-executable` option in this milestone.
   config.bitwuzla_randomize_link_flags = "@CIRCT_ARC_RANDOMIZE_TEST_LINK_FLAGS@"
   ```
 
-- [ ] **Step 2: Define the CMake link flag string**
+- [x] **Step 2: Define the CMake link flag string**
 
   In top-level `CMakeLists.txt`, after Bitwuzla discovery, set a test-only link flag variable:
 
@@ -120,7 +120,7 @@ Do not add an `arcilator --emit-executable` option in this milestone.
   `/usr/local` pkg-config discovery path instead of hard-coding dependency
   guesses into CIRCT.
 
-- [ ] **Step 3: Add lit feature and substitutions**
+- [x] **Step 3: Add lit feature and substitutions**
 
   In `test/lit.cfg.py`, after the `libfst` feature block, add:
 
@@ -135,7 +135,7 @@ Do not add an `arcilator --emit-executable` option in this milestone.
          config.bitwuzla_randomize_link_flags))
   ```
 
-- [ ] **Step 4: Build just the lit config dependencies**
+- [x] **Step 4: Build just the lit config dependencies**
 
   Run:
 
@@ -146,7 +146,7 @@ Do not add an `arcilator --emit-executable` option in this milestone.
   Expected: CMake regenerates the lit config if needed, then `arcilator`
   remains up to date or relinks.
 
-- [ ] **Step 5: Verify lit sees the feature**
+- [x] **Step 5: Verify lit sees the feature**
 
   Run:
 
@@ -156,7 +156,7 @@ Do not add an `arcilator --emit-executable` option in this milestone.
 
   Expected: no Python config error. If the command does not print available features, run one temporary local `.test` file manually and remove it before commit.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```sh
   git add CMakeLists.txt test/lit.site.cfg.py.in test/lit.cfg.py

@@ -444,6 +444,7 @@ option(CIRCT_ARC_ENABLE_BITWUZLA_RANDOMIZE
   "Enable Bitwuzla-backed SystemVerilog class randomize support in Arc runtime."
   OFF)
 
+set(CIRCT_ARC_RANDOMIZE_TEST_LINK_FLAGS "")
 if(CIRCT_ARC_ENABLE_BITWUZLA_RANDOMIZE)
   find_package(Bitwuzla CONFIG QUIET)
   if(NOT Bitwuzla_FOUND)
@@ -479,6 +480,12 @@ if(CIRCT_ARC_ENABLE_BITWUZLA_RANDOMIZE)
         IMPORTED_LOCATION "${Bitwuzla_LIBRARY}"
         INTERFACE_INCLUDE_DIRECTORIES "${Bitwuzla_INCLUDE_DIR}")
     endif()
+  endif()
+  if(BitwuzlaPkg_FOUND)
+    string(REPLACE ";" " " CIRCT_ARC_RANDOMIZE_TEST_LINK_FLAGS
+      "${BitwuzlaPkg_LDFLAGS}")
+  elseif(Bitwuzla_LIBRARY)
+    set(CIRCT_ARC_RANDOMIZE_TEST_LINK_FLAGS "${Bitwuzla_LIBRARY}")
   endif()
   message(STATUS "Arc class randomize support enabled with Bitwuzla.")
 endif()

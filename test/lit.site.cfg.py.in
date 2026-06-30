@@ -40,6 +40,9 @@ config.zlib = "@HAVE_ZLIB@"
 config.scheduling_or_tools = "@SCHEDULING_OR_TOOLS@"
 config.slang_frontend_enabled = @CIRCT_SLANG_FRONTEND_ENABLED@
 config.libfst_enabled = @CIRCT_LIBFST_ENABLED@
+config.arc_bitwuzla_randomize_enabled = "@CIRCT_ARC_ENABLE_BITWUZLA_RANDOMIZE@" == "ON"
+config.circt_arc_runtime_lib = "@LLVM_LIBRARY_OUTPUT_INTDIR@/libCIRCTArcRuntime.a"
+config.bitwuzla_randomize_link_flags = "@CIRCT_ARC_RANDOMIZE_TEST_LINK_FLAGS@"
 
 # Support substitution of the tools_dir with user parameters. This is
 # used when we can't determine the tool dir at configuration time.

@@ -100,4 +100,13 @@ if config.slang_frontend_enabled:
 if config.libfst_enabled:
   config.available_features.add('libfst')
 
+if (config.arc_bitwuzla_randomize_enabled and
+    config.bitwuzla_randomize_link_flags):
+  config.available_features.add('bitwuzla-randomize')
+  config.substitutions.append(('%host_cxx', config.host_cxx))
+  config.substitutions.append(
+      ('%circt_arc_runtime_lib', config.circt_arc_runtime_lib))
+  config.substitutions.append(('%bitwuzla_randomize_link_flags',
+                               config.bitwuzla_randomize_link_flags))
+
 llvm_config.add_tool_substitutions(tools, tool_dirs)
