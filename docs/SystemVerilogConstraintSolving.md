@@ -44,11 +44,20 @@ constraint solving:
   CIRCTArcRuntime CIRCTArcJITRuntime circt-opt`. That cache currently resolves
   Bitwuzla from `/home/markov/Project/bitwuzla`; fresh builds should prefer the
   installed `/usr/local` prefix.
+- `build-bitwuzla/bin/arcilator` has been built with
+  `ninja -C build-bitwuzla -j14 arcilator`.
+- A first arcilator execution-path spike showed that an SV `initial`-based
+  input is the wrong shape for this feature: arcilator should not grow generic
+  `initial` / `llhd.process` support for class randomization.
+- The current executable demo path is AOT-first: arcilator emits LLVM IR from a
+  non-`initial` `func.func @main` harness, then `clang++`/lld links that IR with
+  `CIRCTArcRuntime` and Bitwuzla. This path has smoke coverage for direct solver
+  runtime calls and for a generated `__circt_randomize_Packet` helper.
 
-This is still a skeleton for runtime solving. The major missing piece is model
-coverage for aggregates: 1-dim unpacked array values are solved and
-crosschecked, but not written back yet. Runtime reads of `rand_mode` and
-`constraint_mode` are also not wired yet.
+This is still a skeleton for runtime solving. The major missing semantic pieces
+are aggregate writeback and runtime mode behavior: 1-dim unpacked array values
+are solved and crosschecked, but not written back yet; runtime reads of
+`rand_mode` and `constraint_mode` are also not wired yet.
 
 ## Commit Map
 
@@ -99,6 +108,19 @@ crosschecked, but not written back yet. Runtime reads of `rand_mode` and
     calls, model extraction, scalar writeback, and solver cleanup.
   - Narrows the old frontend "randomization not supported" remark for supported
     builtin class methods.
+- `e05e4bb01` `[Docs] Plan arcilator randomize executable demo`
+  - Adds the AOT-first execution plan.
+  - Records that SV `initial` and generic `llhd.process` lowering are explicit
+    non-goals for this milestone.
+- `ca0417de1` `[test] Expose Bitwuzla randomize link flags to lit`
+  - Adds the `bitwuzla-randomize` lit feature and executable-link
+    substitutions.
+- `286c93c33` `[arcilator] Test AOT constraint solver runtime calls`
+  - Adds a native executable smoke test for direct `arcRuntimeSolver*` calls.
+- `47f8608b4` `[arcilator] Add AOT randomize helper execution demo`
+  - Adds a non-`initial` `func.func @main` harness that calls
+    `__circt_randomize_Packet`.
+  - Links the emitted LLVM IR into an executable and verifies solver writeback.
 
 ## Known Follow-Up Gaps
 
@@ -195,6 +217,10 @@ are not justified by the current use case.
   libraries and `circt-opt`. The verified `build-bitwuzla` cache uses the local
   Bitwuzla checkout; the project also has Bitwuzla installed under
   `/usr/local` for fresh configurations.
+- Arcilator AOT status: `build-bitwuzla/bin/arcilator` builds, the solver
+  runtime can be called from an emitted LLVM executable, and a generated
+  `__circt_randomize_Packet` helper can be invoked from a non-`initial`
+  executable harness.
 
 Unsupported forms should diagnose instead of being silently ignored. The current
 path is enough for a scalar-rand demo skeleton, but it is not a complete

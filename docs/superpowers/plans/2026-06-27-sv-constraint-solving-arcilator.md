@@ -22,6 +22,9 @@ Status as of commit `477086351`:
 - Post-plan demo step complete: scalar integral `rand` model values are committed back into object storage after crosscheck succeeds, and solver cleanup is emitted on success/failure paths.
 - Compile-flow demo complete: a minimal SV file now checks `circt-verilog --ir-moore` and `circt-verilog --ir-moore | circt-opt --convert-moore-to-core`.
 - Bitwuzla-enabled build/link verification complete in `build-bitwuzla`: `ninja -C build-bitwuzla -j12 CIRCTArcRuntime CIRCTArcJITRuntime circt-opt` passed. The current cache still resolves Bitwuzla from `/home/markov/Project/bitwuzla`, not `/usr/local`.
+- Arcilator execution-path spike complete through `arc-opt`: `ninja -C build-bitwuzla -j14 arcilator` built `build-bitwuzla/bin/arcilator`, and the MooreToCore randomize-call output passes arcilator preprocessing, `arc-conv`, and `arc-opt`.
+- First execution boundary clarified: the `llhd.process` blocker came from an unsuitable SV `initial`-based spike input. Arcilator should not grow generic SV `initial` / `llhd.process` support for this feature.
+- AOT executable demo complete: `test/arcilator/randomize-solver-aot.mlir` verifies direct solver runtime calls, and `test/arcilator/randomize-helper-aot.mlir` verifies a non-`initial` `func.func @main` harness calling `__circt_randomize_Packet` and observing scalar writeback.
 
 Remaining implementation gaps:
 
@@ -55,11 +58,20 @@ expression coverage, inline `with`, and seed/replay until this path is working.
    - Keep the local Bitwuzla path out of generic tests and CMake defaults.
    - Confirm the disabled fallback build still works.
 
-4. **Spike the actual arcilator execution path.**
-   - Try to feed the compile-flow demo output into the existing arcilator flow.
-   - If it works, turn that command into the first execution demo.
-   - If it does not work, document the concrete blocker and the smallest adapter or harness that would be needed.
-   - Do not build a general backend abstraction for this spike.
+4. **Done: spike the actual arcilator execution path.**
+   - Built `build-bitwuzla/bin/arcilator` with `ninja -C build-bitwuzla -j14 arcilator`.
+   - Used `test/Conversion/MooreToCore/randomize-call.mlir` as the same-build-dir spike input because the current `build-bitwuzla` cache does not build `circt-verilog` or enable the slang frontend.
+   - Verified the generated randomize helper passes arcilator `preproc`, `arc-conv`, and `arc-opt`.
+   - Concrete boundary: `state-lowering` fails on the `llhd.process` generated from MooreToCore's lowering of `initial`, but arcilator should not support SV `initial` just to run this feature.
+   - Current demo path: use a non-`initial` `func.func @main` harness and AOT executable linking instead.
+   - Do not build a general backend abstraction or a generic LLHD process lowering for this spike.
+
+4a. **Done: add an AOT randomize helper executable demo.**
+   - Added `docs/superpowers/plans/2026-06-30-arcilator-randomize-executable-demo.md`.
+   - Added `test/arcilator/randomize-solver-aot.mlir` for direct `arcRuntimeSolver*` AOT executable calls.
+   - Added `test/arcilator/randomize-helper-aot.mlir` for a generated helper called from `func.func @main`.
+   - Verified the helper demo has no `llhd.process`, `moore.procedure`, or `initial` dependency.
+   - Verified `build-bitwuzla/bin/llvm-lit -a test/arcilator` passes in the Bitwuzla-enabled build.
 
 5. **Commit 1-dim unpacked array model values back to object storage.**
    - Reuse the existing per-element solver variables and crosscheck path.
@@ -133,6 +145,48 @@ Current verified build command:
 ```sh
 ninja -C build-bitwuzla -j12 CIRCTArcRuntime CIRCTArcJITRuntime circt-opt
 ```
+
+Arcilator was also built in the same directory with:
+
+```sh
+ninja -C build-bitwuzla -j14 arcilator
+```
+
+Task-1 execution-path spike commands:
+
+```sh
+build-bitwuzla/bin/circt-opt --convert-moore-to-core \
+  test/Conversion/MooreToCore/randomize-call.mlir \
+  -o /tmp/randomize-core.mlir
+
+build-bitwuzla/bin/arcilator /tmp/randomize-core.mlir \
+  --emit-mlir --until-after=arc-opt \
+  -o /tmp/randomize-arcilator-arc-opt.mlir
+```
+
+The following command currently documents the first execution blocker:
+
+```sh
+build-bitwuzla/bin/arcilator /tmp/randomize-core.mlir \
+  --emit-mlir --until-after=state-lowering \
+  -o /tmp/randomize-arcilator-state-lowering.mlir
+```
+
+It fails because the arcilator state-lowering path sees the `llhd.process`
+emitted by MooreToCore for `initial` and reports that `llhd.process` expects an
+`hw.module` parent. This is a boundary signal, not a request to implement
+generic SV `initial` support in arcilator.
+
+The current AOT executable demo path avoids that unsupported construct:
+
+```sh
+build-bitwuzla/bin/llvm-lit -a test/arcilator/randomize-solver-aot.mlir
+build-bitwuzla/bin/llvm-lit -a test/arcilator/randomize-helper-aot.mlir
+```
+
+The helper demo uses `func.func @main`, calls `__circt_randomize_Packet`, links
+the emitted LLVM IR with `CIRCTArcRuntime` and Bitwuzla, and runs the resulting
+executable.
 
 The current `build-bitwuzla` cache is configured with `LLVM_ENABLE_LLD=ON` and
 the actual `circt-opt` link command includes `-fuse-ld=lld`; `CMAKE_LINKER`
