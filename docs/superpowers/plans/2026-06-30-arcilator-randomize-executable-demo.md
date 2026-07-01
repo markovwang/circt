@@ -36,7 +36,7 @@
 ## File Structure
 
 - Modify `test/lit.site.cfg.py.in`: expose whether `CIRCT_ARC_ENABLE_BITWUZLA_RANDOMIZE` is enabled and provide paths/substitutions needed by executable tests.
-- Modify `test/lit.cfg.py`: add a `bitwuzla-randomize` feature and substitutions for the host C++ compiler, Arc runtime library, and Bitwuzla link flags.
+- Modify `test/lit.cfg.py`: add a `bitwuzla-randomize` feature and substitutions for the Arc runtime library and Bitwuzla link flags.
 - Modify `include/circt/Dialect/Arc/Runtime/JITBind.h`: extend the internal JIT callback table with solver runtime functions.
 - Modify `lib/Dialect/Arc/Runtime/ArcRuntime.cpp`: populate the JIT callback table with `arcRuntimeSolver*` function pointers when JIT binding is enabled.
 - Modify `tools/arcilator/arcilator.cpp`: register solver runtime symbols with the MLIR ExecutionEngine.
@@ -48,11 +48,11 @@
 
 ## Design Choice
 
-Use `arcilator --emit-llvm` plus an external C++ compiler command for executable generation:
+Use `arcilator --emit-llvm` plus `clang++` for executable generation:
 
 ```sh
 arcilator input.mlir --emit-llvm -o %t/model.ll
-%host_cxx %t/model.ll %circt_arc_runtime_lib %bitwuzla_randomize_link_flags -fuse-ld=lld -o %t/model.exe
+clang++ %t/model.ll %circt_arc_runtime_lib %bitwuzla_randomize_link_flags -Wno-override-module -fuse-ld=lld -o %t/model.exe
 %t/model.exe
 ```
 
@@ -171,14 +171,14 @@ Do not add an `arcilator --emit-executable` option in this milestone.
 
 **Interfaces:**
 - Consumes:
-  - `%host_cxx`
+  - `clang++` available on `PATH`.
   - `%circt_arc_runtime_lib`
   - `%bitwuzla_randomize_link_flags`
   - `arcRuntimeSolver*` runtime ABI.
 - Produces:
   - A native executable smoke test proving AOT code can call the solver runtime.
 
-- [ ] **Step 1: Write the failing AOT smoke test**
+- [x] **Step 1: Write the failing AOT smoke test**
 
   Create `test/arcilator/randomize-solver-aot.mlir`:
 
@@ -186,7 +186,7 @@ Do not add an `arcilator --emit-executable` option in this milestone.
   // REQUIRES: bitwuzla-randomize
   // RUN: rm -rf %t && mkdir -p %t
   // RUN: arcilator %s --emit-llvm --no-runtime -o %t/solver.ll
-  // RUN: %host_cxx %t/solver.ll %circt_arc_runtime_lib %bitwuzla_randomize_link_flags -fuse-ld=lld -o %t/solver.exe
+  // RUN: clang++ %t/solver.ll %circt_arc_runtime_lib %bitwuzla_randomize_link_flags -Wno-override-module -fuse-ld=lld -o %t/solver.exe
   // RUN: %t/solver.exe
 
   module {
@@ -222,7 +222,7 @@ Do not add an `arcilator --emit-executable` option in this milestone.
   Keep the behavior exactly this small: create a solver, assert `x > 0`,
   return `0` on SAT, return `1` otherwise.
 
-- [ ] **Step 2: Run the test and observe the current failure**
+- [x] **Step 2: Run the test and observe the current failure**
 
   Run:
 
@@ -232,11 +232,11 @@ Do not add an `arcilator --emit-executable` option in this milestone.
 
   Expected before fixes: either LLVM dialect syntax adjustment is needed, or native link fails because test substitutions/link flags are incomplete.
 
-- [ ] **Step 3: Fix only the test harness syntax/link flags**
+- [x] **Step 3: Fix only the test harness syntax/link flags**
 
   Keep the test semantically minimal. Do not add arcilator driver features. Do not add `initial` or `llhd.process`.
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
   Run:
 
@@ -246,7 +246,7 @@ Do not add an `arcilator --emit-executable` option in this milestone.
 
   Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   ```sh
   git add test/arcilator/randomize-solver-aot.mlir
@@ -468,7 +468,7 @@ Do not add an `arcilator --emit-executable` option in this milestone.
   // REQUIRES: bitwuzla-randomize
   // RUN: rm -rf %t && mkdir -p %t
   // RUN: arcilator %s --emit-llvm --no-runtime -o %t/randomize.ll
-  // RUN: %host_cxx %t/randomize.ll %circt_arc_runtime_lib %bitwuzla_randomize_link_flags -fuse-ld=lld -o %t/randomize.exe
+  // RUN: clang++ %t/randomize.ll %circt_arc_runtime_lib %bitwuzla_randomize_link_flags -Wno-override-module -fuse-ld=lld -o %t/randomize.exe
   // RUN: %t/randomize.exe
   ```
 
