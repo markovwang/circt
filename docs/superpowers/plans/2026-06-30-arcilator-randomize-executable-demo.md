@@ -432,7 +432,7 @@ Do not add an `arcilator --emit-executable` option in this milestone.
 - Produces:
   - A native executable test that calls `__circt_randomize_Packet` from `func.func @main` without `llhd.process`.
 
-- [ ] **Step 1: Generate a working helper baseline**
+- [x] **Step 1: Generate a working helper baseline**
 
   Run:
 
@@ -444,7 +444,7 @@ Do not add an `arcilator --emit-executable` option in this milestone.
 
   Expected: `/tmp/randomize-core.mlir` contains `func.func private @__circt_randomize_Packet`.
 
-- [ ] **Step 2: Create the harness test**
+- [x] **Step 2: Create the harness test**
 
   Create `test/arcilator/randomize-helper-aot.mlir` by copying the generated helper functions and class storage type from `/tmp/randomize-core.mlir`, but replacing the `hw.module` and `llhd.process` section with a plain `func.func @main() -> i32`.
 
@@ -460,7 +460,7 @@ Do not add an `arcilator --emit-executable` option in this milestone.
 
   Keep the test free of `moore.procedure`, `llhd.process`, and SV `initial`.
 
-- [ ] **Step 3: Add AOT RUN lines**
+- [x] **Step 3: Add AOT RUN lines**
 
   At the top of `test/arcilator/randomize-helper-aot.mlir`, add:
 
@@ -472,7 +472,7 @@ Do not add an `arcilator --emit-executable` option in this milestone.
   // RUN: %t/randomize.exe
   ```
 
-- [ ] **Step 4: Run and fix only arcilator-compatible issues**
+- [x] **Step 4: Run and fix only arcilator-compatible issues**
 
   Run:
 
@@ -482,7 +482,7 @@ Do not add an `arcilator --emit-executable` option in this milestone.
 
   Expected before final fixes: failures may expose missing LLVM lowering for the copied helper shape. Fix those by narrowing the helper/harness or by fixing existing randomize lowering, not by adding `initial` support.
 
-- [ ] **Step 5: Verify no `llhd.process` dependency remains**
+- [x] **Step 5: Verify no `llhd.process` dependency remains**
 
   Run:
 
@@ -492,7 +492,7 @@ Do not add an `arcilator --emit-executable` option in this milestone.
 
   Expected: no matches.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```sh
   git add test/arcilator/randomize-helper-aot.mlir
