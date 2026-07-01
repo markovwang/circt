@@ -25,7 +25,8 @@
 ## Current State
 
 - `test/arcilator/randomize-solver-aot.mlir` proves LLVM emitted by arcilator can link against `CIRCTArcRuntime` and Bitwuzla.
-- `test/arcilator/randomize-helper-aot.mlir` proves a native executable can call a generated-style randomize helper, but the helper body is hand-copied.
+- The old hand-copied helper executable test has been retired after the regular
+  lowering test covered the same executable path.
 - `test/Conversion/MooreToCore/randomize-call.mlir` proves MooreToCore already lowers `moore.class.randomize` to a generated helper call.
 - Existing MooreToCore tests already use `moore.class.new` inside `func.func`, so a normal `func.func @main` harness is the shortest path.
 
@@ -45,9 +46,10 @@ The test input owns the harness:
 func.func @main() -> i32 {
   %object = moore.class.new : !moore.class<@Packet>
   %ok = moore.class.randomize %object : !moore.class<@Packet>
+  %ok_builtin = moore.to_builtin_int %ok : i1
   %zero = arith.constant 0 : i32
   %one = arith.constant 1 : i32
-  %ret = arith.select %ok, %zero, %one : i32
+  %ret = arith.select %ok_builtin, %zero, %one : i32
   return %ret : i32
 }
 ```
@@ -73,7 +75,7 @@ MooreToCore should lower this to:
 - Consumes existing `moore.class.new` and `moore.class.randomize` lowering.
 - Produces one runnable executable test for MooreToCore -> arcilator -> clang++/lld.
 
-- [ ] **Step 1: Write the failing/pass-through e2e test**
+- [x] **Step 1: Write the failing/pass-through e2e test**
 
   Create `test/arcilator/randomize-lowering-aot.mlir`:
 
@@ -101,9 +103,10 @@ MooreToCore should lower this to:
   func.func @main() -> i32 {
     %object = moore.class.new : !moore.class<@Packet>
     %ok = moore.class.randomize %object : !moore.class<@Packet>
+    %ok_builtin = moore.to_builtin_int %ok : i1
     %zero = arith.constant 0 : i32
     %one = arith.constant 1 : i32
-    %ret = arith.select %ok, %zero, %one : i32
+    %ret = arith.select %ok_builtin, %zero, %one : i32
     return %ret : i32
   }
 
@@ -115,7 +118,7 @@ MooreToCore should lower this to:
   // CORE: return
   ```
 
-- [ ] **Step 2: Run the single test**
+- [x] **Step 2: Run the single test**
 
   Run:
 
@@ -125,7 +128,7 @@ MooreToCore should lower this to:
 
   Expected: PASS if existing lowering already supports the direct harness.
 
-- [ ] **Step 3: If it fails, fix only the concrete lowering gap**
+- [x] **Step 3: If it fails, fix only the concrete lowering gap**
 
   Use this rule:
 
@@ -134,7 +137,7 @@ MooreToCore should lower this to:
   - If arcilator rejects the lowered `func.func @main`, fix the smallest arcilator lowering issue shown by the diagnostic.
   - Do not add `randomize-entry-class` unless the failure proves a normal `func.func @main` cannot express the required harness.
 
-- [ ] **Step 4: Re-run the single test**
+- [x] **Step 4: Re-run the single test**
 
   Run:
 
@@ -144,7 +147,7 @@ MooreToCore should lower this to:
 
   Expected: PASS.
 
-- [ ] **Step 5: Run the arcilator subset**
+- [x] **Step 5: Run the arcilator subset**
 
   Run:
 
@@ -154,7 +157,7 @@ MooreToCore should lower this to:
 
   Expected: all arcilator tests PASS in the Bitwuzla-enabled build.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```sh
   git add test/arcilator/randomize-lowering-aot.mlir
@@ -171,7 +174,7 @@ MooreToCore should lower this to:
 - Consumes passing `test/arcilator/randomize-lowering-aot.mlir`.
 - Produces no duplicated hand-copied generated helper in arcilator tests.
 
-- [ ] **Step 1: Delete the old helper test**
+- [x] **Step 1: Delete the old helper test**
 
   Delete:
 
@@ -179,7 +182,7 @@ MooreToCore should lower this to:
   test/arcilator/randomize-helper-aot.mlir
   ```
 
-- [ ] **Step 2: Verify the replacement test**
+- [x] **Step 2: Verify the replacement test**
 
   Run:
 
@@ -189,7 +192,7 @@ MooreToCore should lower this to:
 
   Expected: PASS.
 
-- [ ] **Step 3: Verify the direct runtime smoke test**
+- [x] **Step 3: Verify the direct runtime smoke test**
 
   Run:
 
@@ -199,7 +202,7 @@ MooreToCore should lower this to:
 
   Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   ```sh
   git add test/arcilator/randomize-helper-aot.mlir
@@ -216,7 +219,7 @@ MooreToCore should lower this to:
 - Consumes passing regular AOT lowering demo from Task 1.
 - Produces docs that say the mainline executable demo uses regular lowering, not hand-copied helper IR or JIT.
 
-- [ ] **Step 1: Update user-facing status**
+- [x] **Step 1: Update user-facing status**
 
   In `docs/SystemVerilogConstraintSolving.md`, add or update the arcilator status paragraph:
 
@@ -228,7 +231,7 @@ MooreToCore should lower this to:
   lowering, JIT, or a hand-copied randomize helper.
   ```
 
-- [ ] **Step 2: Review docs diff**
+- [x] **Step 2: Review docs diff**
 
   Run:
 
@@ -238,7 +241,7 @@ MooreToCore should lower this to:
 
   Expected: docs mention regular AOT lowering and say JIT is not part of the current demo.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
   ```sh
   git add docs/SystemVerilogConstraintSolving.md
@@ -285,8 +288,7 @@ Delete this fallback once SV/front-end integration can generate an equivalent `f
 ## Commit Order
 
 1. `[arcilator] Add randomize lowering AOT demo`
-2. `[arcilator] Retire hand-copied randomize helper demo`
-3. `[Docs] Document regular randomize AOT demo`
+2. `[arcilator][Docs] Retire hand-copied randomize helper demo`
 
 ## Success Definition
 
