@@ -49,12 +49,12 @@ constraint solving:
 - A first arcilator execution-path spike showed that an SV `initial`-based
   input is the wrong shape for this feature: arcilator should not grow generic
   `initial` / `llhd.process` support for class randomization.
-- The current executable demo path is AOT-first: a normal `func.func @main`
-  harness uses `moore.class.new` and `moore.class.randomize`, MooreToCore lowers
-  that into the generated `__circt_randomize_Packet` helper, arcilator emits
-  LLVM IR, and `clang++`/lld links the executable with `CIRCTArcRuntime` and
-  Bitwuzla. It does not rely on SV `initial`, generic `llhd.process` lowering,
-  JIT, or a hand-copied randomize helper.
+- The current executable demo path now covers `SV -> Moore MLIR -> MooreToCore
+  -> arcilator LLVM -> C++ testbench -> native executable`. The SV file owns
+  the class and constraint, the lit test adds a thin Moore harness that exports
+  `randomize_packet()`, and a temporary C++ testbench calls that symbol. The
+  flow still avoids SV `initial`, generic `llhd.process` lowering, JIT, and
+  demo-only MooreToCore entry-generation options.
 
 This is still a skeleton for runtime solving. The major missing semantic pieces
 are aggregate writeback and runtime mode behavior: 1-dim unpacked array values
@@ -227,10 +227,13 @@ are not justified by the current use case.
   libraries and `circt-opt`. The verified `build-bitwuzla` cache uses the local
   Bitwuzla checkout; the project also has Bitwuzla installed under
   `/usr/local` for fresh configurations.
-- Arcilator AOT status: `build-bitwuzla/bin/arcilator` builds, the solver
-  runtime can be called from an emitted LLVM executable, and the regular
-  MooreToCore path can lower `moore.class.new` plus `moore.class.randomize` from
-  a non-`initial` `func.func @main` harness into a native executable.
+- Arcilator AOT status: `build-bitwuzla/bin/arcilator` and
+  `build-bitwuzla/bin/circt-verilog` build, the solver runtime can be called
+  from an emitted LLVM executable, and the regular frontend-to-runtime demo can
+  start from an SV class constraint file, append a non-`initial`
+  `randomize_packet()` harness, lower through MooreToCore and arcilator, link a
+  C++ testbench with `CIRCTArcRuntime` plus Bitwuzla, and run the native
+  executable.
 
 Unsupported forms should diagnose instead of being silently ignored. The current
 path is enough for a scalar-rand demo skeleton, but it is not a complete
