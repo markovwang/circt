@@ -7,9 +7,18 @@ class Packet;
   constraint c { len > 0; }
 endclass
 
+function int randomize_packet();
+  automatic Packet p = new;
+  bit ok;
+  ok = p.randomize();
+  return ok ? 0 : 1;
+endfunction
+
+export "DPI-C" randomize_packet = function randomize_packet;
+
 module m;
   initial begin
-    Packet p = new;
+    automatic Packet p = new;
     bit ok;
     ok = p.randomize();
   end
@@ -17,6 +26,9 @@ endmodule
 
 // IMPORT: moore.class.classdecl @Packet
 // IMPORT: moore.class.constraintdecl @c
+// IMPORT-LABEL: func.func @randomize_packet
+// IMPORT-SAME: circt.dpi.export = "randomize_packet"
+// IMPORT: moore.class.new
 // IMPORT: moore.class.randomize
 
 // LOWER-LABEL: func.func private @__circt_randomize_Packet

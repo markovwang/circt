@@ -412,14 +412,21 @@ SmallVector<MemorySlot> VariableOp::getPromotableSlots() {
 
   // Ensure that `getDefaultValue` can conjure up a default value for the
   // variable's type.
-  auto nestedType = dyn_cast<PackedType>(getType().getNestedType());
-  if (!nestedType || !nestedType.getBitSize())
+  auto nestedType = getType().getNestedType();
+  auto packedType = dyn_cast<PackedType>(nestedType);
+  if (!isa<ClassHandleType>(nestedType) &&
+      (!packedType || !packedType.getBitSize()))
     return {};
 
-  return {MemorySlot{getResult(), getType().getNestedType()}};
+  return {MemorySlot{getResult(), nestedType}};
 }
 
 Value VariableOp::getDefaultValue(const MemorySlot &slot, OpBuilder &builder) {
+  if (isa<ClassHandleType>(slot.elemType)) {
+    auto nullValue = NullOp::create(builder, getLoc());
+    return ConversionOp::create(builder, getLoc(), slot.elemType, nullValue);
+  }
+
   auto packedType = dyn_cast<PackedType>(slot.elemType);
   if (!packedType)
     return {};

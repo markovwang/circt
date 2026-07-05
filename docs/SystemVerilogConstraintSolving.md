@@ -51,8 +51,9 @@ constraint solving:
   `initial` / `llhd.process` support for class randomization.
 - The current executable demo path now covers `SV -> Moore MLIR -> MooreToCore
   -> arcilator LLVM -> C++ testbench -> native executable`. The SV file owns
-  the class and constraint, the lit test adds a thin Moore harness that exports
-  `randomize_packet()`, and a temporary C++ testbench calls that symbol. The
+  the class, constraint, object allocation, `randomize()` call, and exported
+  `randomize_packet()` entry function. The shell script only invokes tools and
+  links the C++ testbench; it no longer appends hand-written Moore MLIR. The
   flow still avoids SV `initial`, generic `llhd.process` lowering, JIT, and
   demo-only MooreToCore entry-generation options.
 
@@ -230,9 +231,9 @@ are not justified by the current use case.
 - Arcilator AOT status: `build-bitwuzla/bin/arcilator` and
   `build-bitwuzla/bin/circt-verilog` build, the solver runtime can be called
   from an emitted LLVM executable, and the regular frontend-to-runtime demo can
-  start from an SV class constraint file, append a non-`initial`
-  `randomize_packet()` harness, lower through MooreToCore and arcilator, link a
-  C++ testbench with `CIRCTArcRuntime` plus Bitwuzla, and run the native
+  start from an SV class constraint file with a non-`initial`
+  `randomize_packet()` function, lower through MooreToCore and arcilator, link
+  a C++ testbench with `CIRCTArcRuntime` plus Bitwuzla, and run the native
   executable.
 
 Unsupported forms should diagnose instead of being silently ignored. The current

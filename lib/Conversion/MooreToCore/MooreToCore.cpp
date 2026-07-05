@@ -32,6 +32,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Transforms/Mem2Reg.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -971,6 +972,29 @@ static Value createZeroValue(Type type, Location loc,
   return rewriter.createOrFold<hw::BitcastOp>(loc, type, constZero);
 }
 
+static bool isFunctionLocalClassHandleVariable(VariableOp op) {
+  if (!op->getParentOfType<func::FuncOp>())
+    return false;
+  auto refType = dyn_cast<RefType>(op.getResult().getType());
+  return refType && isa<ClassHandleType>(refType.getNestedType());
+}
+
+static LogicalResult promoteFunctionLocalClassHandleVariables(ModuleOp module) {
+  SmallVector<PromotableAllocationOpInterface> allocators;
+  module.walk([&](VariableOp op) {
+    if (isFunctionLocalClassHandleVariable(op))
+      allocators.push_back(
+          cast<PromotableAllocationOpInterface>(op.getOperation()));
+  });
+  if (allocators.empty())
+    return success();
+
+  OpBuilder builder(module.getContext());
+  DataLayout dataLayout(module);
+  DominanceInfo dominance(module);
+  return tryToPromoteMemorySlots(allocators, builder, dataLayout, dominance);
+}
+
 struct ClassPropertyRefOpConversion
     : public OpConversionPattern<circt::moore::ClassPropertyRefOp> {
   ClassPropertyRefOpConversion(TypeConverter &tc, MLIRContext *ctx,
@@ -1080,6 +1104,20 @@ struct ClassRandomizeOpConversion
     auto call = func::CallOp::create(rewriter, op.getLoc(), helper,
                                      adaptor.getObject());
     rewriter.replaceOp(op, call.getResult(0));
+    return success();
+  }
+};
+
+struct NullOpConversion : public OpConversionPattern<NullOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(NullOp op, OpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto resultType = typeConverter->convertType(op.getResult().getType());
+    if (!resultType)
+      return rewriter.notifyMatchFailure(op.getLoc(), "invalid null type");
+    rewriter.replaceOpWithNewOp<LLVM::ZeroOp>(op, resultType);
     return success();
   }
 };
@@ -1950,6 +1988,10 @@ struct ConversionOpConversion : public OpConversionPattern<ConversionOp> {
     if (!resultType) {
       op.emitError("conversion result type is not currently supported");
       return failure();
+    }
+    if (adaptor.getInput().getType() == resultType) {
+      rewriter.replaceOp(op, adaptor.getInput());
+      return success();
     }
     int64_t inputBw = hw::getBitWidth(adaptor.getInput().getType());
     int64_t resultBw = hw::getBitWidth(resultType);
@@ -3305,6 +3347,10 @@ static void populateTypeConversion(TypeConverter &typeConverter) {
     return sim::DynamicStringType::get(type.getContext());
   });
 
+  typeConverter.addConversion([&](NullType type) -> std::optional<Type> {
+    return LLVM::LLVMPointerType::get(type.getContext());
+  });
+
   typeConverter.addConversion([&](QueueType type) {
     return sim::QueueType::get(type.getContext(),
                                typeConverter.convertType(type.getElementType()),
@@ -3504,6 +3550,7 @@ static void populateOpConversion(ConversionPatternSet &patterns,
                                            patterns.getContext());
   patterns.add<ClassPropertyRefOpConversion>(typeConverter,
                                              patterns.getContext(), classCache);
+  patterns.add<NullOpConversion>(typeConverter, patterns.getContext());
 
   // clang-format off
   patterns.add<
@@ -3748,6 +3795,9 @@ void MooreToCorePass::runOnOperation() {
 
   IRRewriter rewriter(module);
   (void)mlir::eraseUnreachableBlocks(rewriter, module->getRegions());
+
+  if (failed(promoteFunctionLocalClassHandleVariables(module)))
+    return signalPassFailure();
 
   TypeConverter typeConverter;
   populateTypeConversion(typeConverter);
