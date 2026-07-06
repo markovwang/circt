@@ -1,0 +1,56 @@
+# RUN: %PYTHON% %S/../../tools/arcilator/arcilator-header-cpp.py \
+# RUN:   %S/Inputs/randomize-class-view/state.json \
+# RUN:   --class-info %S/Inputs/randomize-class-view/class-info.json \
+# RUN:   | FileCheck %s
+# RUN: %PYTHON% %S/../../tools/arcilator/arcilator-header-cpp.py \
+# RUN:   %S/Inputs/randomize-class-view/state.json \
+# RUN:   --class-info %S/Inputs/randomize-class-view/class-info.json \
+# RUN:   | FileCheck %s --check-prefix=ORDER
+
+# CHECK-DAG: struct ClassField
+# CHECK-DAG: class PacketSinkView
+# CHECK-DAG: uint32_t &len;
+# CHECK-DAG: uint32_t &addr;
+# CHECK-DAG: uint8_t &ok;
+
+# CHECK-DAG: extern "C" {
+# CHECK-DAG: void *__circt_new_Packet();
+# CHECK-DAG: void __circt_delete_Packet(void *object);
+# CHECK-DAG: bool __circt_randomize_Packet(void *object);
+
+# CHECK-DAG: class PacketLayout
+# CHECK-DAG: static const char *name;
+# CHECK-DAG: static const unsigned numBytes;
+# CHECK-DAG: static const std::array<ClassField, 2> fields;
+
+# CHECK-DAG: const char *PacketLayout::name = "Packet";
+# CHECK-DAG: const unsigned PacketLayout::numBytes = 32;
+# CHECK-DAG: ClassField{"len", 16, 32}
+# CHECK-DAG: ClassField{"addr", 20, 32}
+
+# CHECK-DAG: class PacketView
+# CHECK-DAG: int32_t &len;
+# CHECK-DAG: int32_t &addr;
+# CHECK-DAG: explicit PacketView(uint8_t *object)
+# CHECK-DAG: len(*reinterpret_cast<int32_t *>(object + 16))
+# CHECK-DAG: addr(*reinterpret_cast<int32_t *>(object + 20))
+
+# CHECK-DAG: class Packet
+# CHECK-DAG: Packet()
+# CHECK-DAG: __circt_new_Packet()
+# CHECK-DAG: ~Packet()
+# CHECK-DAG: __circt_delete_Packet(object)
+# CHECK-DAG: Packet(const Packet &) = delete;
+# CHECK-DAG: Packet &operator=(const Packet &) = delete;
+# CHECK-DAG: Packet(Packet &&) = delete;
+# CHECK-DAG: Packet &operator=(Packet &&) = delete;
+# CHECK-DAG: bool randomize()
+# CHECK-DAG: return __circt_randomize_Packet(object);
+
+# ORDER-LABEL: class Packet {
+# ORDER-NEXT: private:
+# ORDER-NEXT: uint8_t *object;
+# ORDER: public:
+# ORDER: Packet() :
+# ORDER-NEXT: object(static_cast<uint8_t *>(__circt_new_Packet())),
+# ORDER-NEXT: view(object) {}

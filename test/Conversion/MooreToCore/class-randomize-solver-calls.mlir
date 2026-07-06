@@ -12,7 +12,7 @@ moore.class.classdecl @Packet {
   }
 }
 
-// CHECK: func.func private @__circt_randomize_Packet
+// CHECK: func.func @__circt_randomize_Packet
 // CHECK: call @arcRuntimeSolverCreate
 // CHECK: call @arcRuntimeSolverBvVar
 // CHECK: call @arcRuntimeSolverBvConst

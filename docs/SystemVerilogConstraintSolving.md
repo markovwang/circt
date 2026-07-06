@@ -50,12 +50,14 @@ constraint solving:
   input is the wrong shape for this feature: arcilator should not grow generic
   `initial` / `llhd.process` support for class randomization.
 - The current executable demo path now covers `SV -> Moore MLIR -> MooreToCore
-  -> arcilator LLVM -> C++ testbench -> native executable`. The SV file owns
-  the class, constraint, object allocation, `randomize()` call, and exported
-  `randomize_packet()` entry function. The shell script only invokes tools and
-  links the C++ testbench; it no longer appends hand-written Moore MLIR. The
-  flow still avoids SV `initial`, generic `llhd.process` lowering, JIT, and
-  demo-only MooreToCore entry-generation options.
+  -> arcilator LLVM + generated C++ header -> C++ testbench -> native
+  executable`. Module ports remain exposed through the existing
+  `dut.view.port` API, and randomizable classes are exposed through generated
+  heap-backed wrappers such as `Packet pkt; pkt.randomize(); pkt.view.len`.
+  The class object is not Arc model state storage, but the generated C++ access
+  pattern intentionally mirrors arcilator's module view style. The flow still
+  avoids SV `initial`, generic `llhd.process` lowering, JIT, and hand-written
+  Moore harness injection.
 
 This is still a skeleton for runtime solving. The major missing semantic pieces
 are aggregate writeback and runtime mode behavior: 1-dim unpacked array values
@@ -231,10 +233,10 @@ are not justified by the current use case.
 - Arcilator AOT status: `build-bitwuzla/bin/arcilator` and
   `build-bitwuzla/bin/circt-verilog` build, the solver runtime can be called
   from an emitted LLVM executable, and the regular frontend-to-runtime demo can
-  start from an SV class constraint file with a non-`initial`
-  `randomize_packet()` function, lower through MooreToCore and arcilator, link
-  a C++ testbench with `CIRCTArcRuntime` plus Bitwuzla, and run the native
-  executable.
+  start from an SV class plus a tiny module sink, lower through MooreToCore and
+  arcilator, generate the paired C++ header, link a C++ testbench with
+  `CIRCTArcRuntime` plus Bitwuzla, print constrained randomized values, and run
+  the native executable.
 
 Unsupported forms should diagnose instead of being silently ignored. The current
 path is enough for a scalar-rand demo skeleton, but it is not a complete

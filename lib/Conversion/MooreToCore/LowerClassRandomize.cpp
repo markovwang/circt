@@ -708,7 +708,6 @@ static LogicalResult emitRandomizeHelper(ModuleOp module, OpBuilder &builder,
   builder.setInsertionPointAfter(checkHelper);
   auto helper = func::FuncOp::create(builder, problem.cls.getLoc(), name,
                                      builder.getFunctionType({ptrTy}, {i1Ty}));
-  helper.setPrivate();
   auto *body = helper.addEntryBlock();
   builder.setInsertionPointToEnd(body);
 

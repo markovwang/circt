@@ -28,7 +28,7 @@ func.func @main() -> i32 {
   return %ret : i32
 }
 
-// CORE-LABEL: func.func private @__circt_randomize_Packet
+// CORE-LABEL: func.func @__circt_randomize_Packet
 // CORE: call @arcRuntimeSolverCheck
 // CORE-LABEL: func.func @main() -> i32
 // CORE: call @malloc

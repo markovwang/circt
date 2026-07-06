@@ -17,6 +17,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
+#include <cstdint>
 #include <string>
 
 namespace circt {
@@ -49,6 +50,24 @@ struct ModelInfo {
         finalFnSym(finalFnSym) {}
 };
 
+/// Gathers information about a randomizable class field.
+struct ClassFieldInfo {
+  std::string name;
+  uint64_t offset;
+  uint64_t numBits;
+  std::string cppType;
+};
+
+/// Gathers information about a randomizable class.
+struct ClassInfo {
+  std::string name;
+  uint64_t numBytes;
+  std::string newFn;
+  std::string deleteFn;
+  std::string randomizeFn;
+  llvm::SmallVector<ClassFieldInfo> fields;
+};
+
 struct ModelInfoAnalysis {
   explicit ModelInfoAnalysis(Operation *container);
   llvm::MapVector<ModelOp, ModelInfo> infoMap;
@@ -67,6 +86,14 @@ mlir::LogicalResult collectModels(mlir::ModuleOp module,
 /// Serializes `models` to `outputStream` in JSON format.
 void serializeModelInfoToJson(llvm::raw_ostream &outputStream,
                               llvm::ArrayRef<ModelInfo> models);
+
+/// Collects randomizable class information from the provided `module`.
+mlir::LogicalResult collectClassInfo(mlir::ModuleOp module,
+                                     llvm::SmallVector<ClassInfo> &classes);
+
+/// Serializes `classes` to `outputStream` in JSON format.
+void serializeClassInfoToJson(llvm::raw_ostream &outputStream,
+                              llvm::ArrayRef<ClassInfo> classes);
 
 } // namespace arc
 } // namespace circt

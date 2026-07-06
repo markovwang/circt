@@ -132,6 +132,12 @@ static llvm::cl::opt<std::string> stateFile("state-file",
                                             llvm::cl::init(""),
                                             llvm::cl::cat(mainCategory));
 
+static llvm::cl::opt<std::string>
+    classInfoFile("class-info-file",
+                  llvm::cl::desc("Randomizable class info file"),
+                  llvm::cl::value_desc("filename"), llvm::cl::init(""),
+                  llvm::cl::cat(mainCategory));
+
 static llvm::cl::opt<bool> shouldInline("inline", llvm::cl::desc("Inline arcs"),
                                         llvm::cl::init(true),
                                         llvm::cl::cat(mainCategory));
@@ -429,6 +435,26 @@ static LogicalResult processBuffer(
       return failure();
     }
 
+    outputFile.keep();
+  }
+
+  // Output randomizable class info as JSON if requested.
+  if (!classInfoFile.empty()) {
+    std::error_code ec;
+    llvm::ToolOutputFile outputFile(classInfoFile, ec,
+                                    llvm::sys::fs::OpenFlags::OF_None);
+    if (ec) {
+      llvm::errs() << "unable to open class info file: " << ec.message()
+                   << '\n';
+      return failure();
+    }
+
+    SmallVector<arc::ClassInfo> classes;
+    if (failed(arc::collectClassInfo(module.get(), classes))) {
+      llvm::errs() << "failed to collect class info\n";
+      return failure();
+    }
+    arc::serializeClassInfoToJson(outputFile.os(), classes);
     outputFile.keep();
   }
 

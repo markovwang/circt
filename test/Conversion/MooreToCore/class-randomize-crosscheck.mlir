@@ -14,7 +14,6 @@ moore.class.classdecl @Packet {
 
 // CHECK-LABEL: func.func private @__circt_randomize_check_Packet
 // CHECK: arith.cmpi sgt
-// CHECK-LABEL: func.func private @__circt_randomize_Packet
+// CHECK-LABEL: func.func @__circt_randomize_Packet
 // CHECK: call @__circt_randomize_check_Packet
 // CHECK: cf.cond_br
-

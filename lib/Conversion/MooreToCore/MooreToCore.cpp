@@ -329,6 +329,59 @@ static LogicalResult resolveClassStructBody(ModuleOp mod, SymbolRefAttr op,
   return resolveClassStructBody(classDeclOp, typeConverter, cache);
 }
 
+static uint64_t alignTo(uint64_t offset, uint64_t alignment) {
+  if (alignment <= 1)
+    return offset;
+  return ((offset + alignment - 1) / alignment) * alignment;
+}
+
+static FailureOr<uint64_t>
+computeClassPropertyByteOffset(DataLayout &layout,
+                               LLVM::LLVMStructType classBody,
+                               ArrayRef<unsigned> gepPath) {
+  Type currentType = classBody;
+  uint64_t offset = 0;
+
+  for (auto index : gepPath) {
+    auto structTy = dyn_cast<LLVM::LLVMStructType>(currentType);
+    if (!structTy || structTy.isOpaque())
+      return failure();
+
+    auto body = structTy.getBody();
+    if (index >= body.size())
+      return failure();
+
+    for (unsigned i = 0; i < index; ++i) {
+      if (!structTy.isPacked())
+        offset = alignTo(offset, layout.getTypeABIAlignment(body[i]));
+      offset += layout.getTypeSize(body[i]);
+    }
+
+    if (!structTy.isPacked())
+      offset = alignTo(offset, layout.getTypeABIAlignment(body[index]));
+    currentType = body[index];
+  }
+
+  return offset;
+}
+
+static std::optional<std::string> getClassViewCppType(Type type) {
+  auto intTy = dyn_cast<IntType>(type);
+  if (!intTy)
+    return std::nullopt;
+
+  unsigned width = intTy.getWidth();
+  if (width <= 8)
+    return "int8_t";
+  if (width <= 16)
+    return "int16_t";
+  if (width <= 32)
+    return "int32_t";
+  if (width <= 64)
+    return "int64_t";
+  return std::nullopt;
+}
+
 /// Returns the passed value if the integer width is already correct.
 /// Zero-extends if it is too narrow.
 /// Truncates if the integer is too wide and the truncated part is zero, if it
@@ -1086,6 +1139,74 @@ static std::string getRandomizeHelperName(ClassHandleType handleTy) {
       .str();
 }
 
+static std::string getRandomizeHelperName(SymbolRefAttr classSym) {
+  return (Twine("__circt_randomize_") + classSym.getRootReference().getValue())
+      .str();
+}
+
+static std::string getClassNewHelperName(SymbolRefAttr classSym) {
+  return (Twine("__circt_new_") + classSym.getRootReference().getValue()).str();
+}
+
+static std::string getClassDeleteHelperName(SymbolRefAttr classSym) {
+  return (Twine("__circt_delete_") + classSym.getRootReference().getValue())
+      .str();
+}
+
+static FailureOr<Value>
+createClassAllocation(Location loc, SymbolRefAttr sym, ModuleOp mod,
+                      const TypeConverter &typeConverter, ClassTypeCache &cache,
+                      FunctionCache &funcCache,
+                      ConversionPatternRewriter &rewriter) {
+  MLIRContext *ctx = rewriter.getContext();
+
+  if (failed(resolveClassStructBody(mod, sym, typeConverter, cache)))
+    return failure();
+
+  auto structInfo = cache.getStructInfo(sym);
+  assert(structInfo && "class struct info must exist");
+  auto structTy = structInfo->classBody;
+
+  // Check that all struct members have data layout support. Types like
+  // !sim.dstring or !sim.queue don't have a known size, which would cause a
+  // fatal error in DataLayout::getTypeSize below.
+  for (auto memberTy : structTy.getBody()) {
+    if (!LLVM::isCompatibleType(memberTy) &&
+        !memberTy.hasTrait<DataLayoutTypeInterface::Trait>()) {
+      mlir::emitError(loc)
+          << "class struct has member types with no data layout";
+      return failure();
+    }
+  }
+
+  DataLayout dl(mod);
+  uint64_t byteSize = dl.getTypeSize(structTy);
+  auto i64Ty = IntegerType::get(ctx, 64);
+  auto cSize = LLVM::ConstantOp::create(rewriter, loc, i64Ty,
+                                        rewriter.getI64IntegerAttr(byteSize));
+
+  auto ptrTy = LLVM::LLVMPointerType::get(ctx);
+  auto mallocFn = funcCache.getOrCreate(rewriter, "malloc", {i64Ty}, {ptrTy});
+  auto call =
+      func::CallOp::create(rewriter, loc, mallocFn, ValueRange{cSize});
+
+  auto typeInfoAddr =
+      LLVM::AddressOfOp::create(rewriter, loc, structInfo->typeInfo.global);
+  auto i32Ty = IntegerType::get(ctx, 32);
+  auto headerIdx = LLVM::ConstantOp::create(
+      rewriter, loc, i32Ty,
+      rewriter.getI32IntegerAttr(structInfo->headerFieldIndex));
+  auto typeInfoIdx = LLVM::ConstantOp::create(
+      rewriter, loc, i32Ty,
+      rewriter.getI32IntegerAttr(structInfo->typeInfoFieldIndex));
+  auto headerPtr =
+      LLVM::GEPOp::create(rewriter, loc, ptrTy, structTy, call.getResult(0),
+                          ValueRange{headerIdx, typeInfoIdx});
+  LLVM::StoreOp::create(rewriter, loc, typeInfoAddr, headerPtr);
+
+  return call.getResult(0);
+}
+
 struct ClassRandomizeOpConversion
     : public OpConversionPattern<ClassRandomizeOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -1133,61 +1254,20 @@ struct ClassNewOpConversion : public OpConversionPattern<ClassNewOp> {
   matchAndRewrite(ClassNewOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    MLIRContext *ctx = rewriter.getContext();
 
     auto handleTy = cast<ClassHandleType>(op.getResult().getType());
     auto sym = handleTy.getClassSym();
 
     ModuleOp mod = op->getParentOfType<ModuleOp>();
 
-    if (failed(resolveClassStructBody(mod, sym, *typeConverter, cache)))
+    auto object = createClassAllocation(loc, sym, mod, *typeConverter, cache,
+                                        funcCache, rewriter);
+    if (failed(object))
       return op.emitError() << "Could not resolve class struct for " << sym;
-
-    auto structTy = cache.getStructInfo(sym)->classBody;
-    auto typeInfo = cache.getStructInfo(sym)->typeInfo;
-
-    // Check that all struct members have data layout support. Types like
-    // !sim.dstring or !sim.queue don't have a known size, which would cause
-    // a fatal error in DataLayout::getTypeSize below.
-    for (auto memberTy : structTy.getBody()) {
-      if (!LLVM::isCompatibleType(memberTy) &&
-          !memberTy.hasTrait<DataLayoutTypeInterface::Trait>()) {
-        return op.emitError()
-               << "class struct has member types with no data layout";
-      }
-    }
-
-    DataLayout dl(mod);
-    // DataLayout::getTypeSize gives a byte count for LLVM types.
-    uint64_t byteSize = dl.getTypeSize(structTy);
-    auto i64Ty = IntegerType::get(ctx, 64);
-    auto cSize = LLVM::ConstantOp::create(rewriter, loc, i64Ty,
-                                          rewriter.getI64IntegerAttr(byteSize));
-
-    // Get or declare malloc and call it.
-    auto ptrTy = LLVM::LLVMPointerType::get(ctx); // opaque pointer result
-    auto mallocFn = funcCache.getOrCreate(rewriter, "malloc", {i64Ty}, {ptrTy});
-    auto call =
-        func::CallOp::create(rewriter, loc, mallocFn, ValueRange{cSize});
-
-    auto typeInfoAddr =
-        LLVM::AddressOfOp::create(rewriter, loc, typeInfo.global);
-    auto i32Ty = IntegerType::get(ctx, 32);
-    auto headerIdx = LLVM::ConstantOp::create(
-        rewriter, loc, i32Ty,
-        rewriter.getI32IntegerAttr(cache.getStructInfo(sym)->headerFieldIndex));
-    auto typeInfoIdx = LLVM::ConstantOp::create(
-        rewriter, loc, i32Ty,
-        rewriter.getI32IntegerAttr(
-            cache.getStructInfo(sym)->typeInfoFieldIndex));
-    auto headerPtr =
-        LLVM::GEPOp::create(rewriter, loc, ptrTy, structTy, call.getResult(0),
-                            ValueRange{headerIdx, typeInfoIdx});
-    LLVM::StoreOp::create(rewriter, loc, typeInfoAddr, headerPtr);
 
     // Replace the new op with the malloc pointer (no cast needed with opaque
     // ptrs).
-    rewriter.replaceOp(op, call.getResult(0));
+    rewriter.replaceOp(op, *object);
     return success();
   }
 
@@ -1198,8 +1278,9 @@ private:
 
 struct ClassDeclOpConversion : public OpConversionPattern<ClassDeclOp> {
   ClassDeclOpConversion(TypeConverter &tc, MLIRContext *ctx,
-                        ClassTypeCache &cache)
-      : OpConversionPattern<ClassDeclOp>(tc, ctx), cache(cache) {}
+                        ClassTypeCache &cache, FunctionCache &funcCache)
+      : OpConversionPattern<ClassDeclOp>(tc, ctx), cache(cache),
+        funcCache(funcCache) {}
 
   LogicalResult
   matchAndRewrite(ClassDeclOp op, OpAdaptor,
@@ -1207,13 +1288,132 @@ struct ClassDeclOpConversion : public OpConversionPattern<ClassDeclOp> {
 
     if (failed(resolveClassStructBody(op, *typeConverter, cache)))
       return failure();
+
+    auto mod = op->getParentOfType<ModuleOp>();
+    auto classSym = SymbolRefAttr::get(op.getSymNameAttr());
+    auto randomizeFn = getRandomizeHelperName(classSym);
+
+    if (mod.lookupSymbol<func::FuncOp>(randomizeFn)) {
+      if (failed(emitClassLifecycleHelpers(op, classSym, rewriter)))
+        return failure();
+      if (failed(emitClassInfoMetadata(op, classSym, randomizeFn, rewriter)))
+        return failure();
+    }
+
     // The declaration itself is a no-op
     rewriter.eraseOp(op);
     return success();
   }
 
 private:
+  LogicalResult
+  emitClassLifecycleHelpers(ClassDeclOp op, SymbolRefAttr classSym,
+                            ConversionPatternRewriter &rewriter) const {
+    auto mod = op->getParentOfType<ModuleOp>();
+    auto loc = op.getLoc();
+    auto *ctx = op.getContext();
+    auto ptrTy = LLVM::LLVMPointerType::get(ctx);
+
+    if (!mod.lookupSymbol<func::FuncOp>(getClassNewHelperName(classSym))) {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(mod.getBody());
+      auto fn = func::FuncOp::create(
+          rewriter, loc, getClassNewHelperName(classSym),
+          rewriter.getFunctionType({}, {ptrTy}));
+      auto *body = fn.addEntryBlock();
+      rewriter.setInsertionPointToEnd(body);
+      auto object = createClassAllocation(loc, classSym, mod, *typeConverter,
+                                          cache, funcCache, rewriter);
+      if (failed(object))
+        return failure();
+      func::ReturnOp::create(rewriter, loc, *object);
+    }
+
+    if (!mod.lookupSymbol<func::FuncOp>(getClassDeleteHelperName(classSym))) {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(mod.getBody());
+      auto fn = func::FuncOp::create(
+          rewriter, loc, getClassDeleteHelperName(classSym),
+          rewriter.getFunctionType({ptrTy}, {}));
+      auto *body = fn.addEntryBlock();
+      rewriter.setInsertionPointToEnd(body);
+      auto freeFn = funcCache.getOrCreate(rewriter, "free", {ptrTy}, {});
+      func::CallOp::create(rewriter, loc, freeFn, body->getArgument(0));
+      func::ReturnOp::create(rewriter, loc);
+    }
+
+    return success();
+  }
+
+  LogicalResult
+  emitClassInfoMetadata(ClassDeclOp op, SymbolRefAttr classSym,
+                        StringRef randomizeFn,
+                        ConversionPatternRewriter &rewriter) const {
+    auto mod = op->getParentOfType<ModuleOp>();
+    auto structInfo = cache.getStructInfo(classSym);
+    assert(structInfo && "class struct info must exist");
+
+    DataLayout layout(mod);
+    uint64_t numBytes = layout.getTypeSize(structInfo->classBody);
+    SmallVector<Attribute> fields;
+
+    for (auto property : op.getBody().getOps<ClassPropertyDeclOp>()) {
+      if (property->hasAttr("circt.randomize.mode"))
+        continue;
+
+      auto cppType = getClassViewCppType(property.getPropertyType());
+      if (!cppType)
+        continue;
+
+      auto path = structInfo->getFieldPath(property.getSymName());
+      if (!path)
+        return property.emitError()
+               << "missing class storage path for class-info field";
+
+      auto offset =
+          computeClassPropertyByteOffset(layout, structInfo->classBody, *path);
+      if (failed(offset))
+        return property.emitError()
+               << "failed to compute class-info byte offset";
+
+      fields.push_back(rewriter.getDictionaryAttr({
+          rewriter.getNamedAttr("name",
+                                rewriter.getStringAttr(property.getSymName())),
+          rewriter.getNamedAttr("offset",
+                                rewriter.getI64IntegerAttr(*offset)),
+          rewriter.getNamedAttr(
+              "numBits",
+              rewriter.getI64IntegerAttr(
+                  cast<IntType>(property.getPropertyType()).getWidth())),
+          rewriter.getNamedAttr("cppType", rewriter.getStringAttr(*cppType)),
+      }));
+    }
+
+    auto classInfo = rewriter.getDictionaryAttr({
+        rewriter.getNamedAttr("name", rewriter.getStringAttr(op.getSymName())),
+        rewriter.getNamedAttr("numBytes",
+                              rewriter.getI64IntegerAttr(numBytes)),
+        rewriter.getNamedAttr("newFn",
+                              rewriter.getStringAttr(
+                                  getClassNewHelperName(classSym))),
+        rewriter.getNamedAttr("deleteFn",
+                              rewriter.getStringAttr(
+                                  getClassDeleteHelperName(classSym))),
+        rewriter.getNamedAttr("randomizeFn",
+                              rewriter.getStringAttr(randomizeFn)),
+        rewriter.getNamedAttr("fields", rewriter.getArrayAttr(fields)),
+    });
+
+    SmallVector<Attribute> classes;
+    if (auto existing = mod->getAttrOfType<ArrayAttr>("circt.arc.class_info"))
+      classes.append(existing.begin(), existing.end());
+    classes.push_back(classInfo);
+    mod->setAttr("circt.arc.class_info", rewriter.getArrayAttr(classes));
+    return success();
+  }
+
   ClassTypeCache &cache; // shared, owned by the pass
+  FunctionCache &funcCache;
 };
 
 struct VariableOpConversion : public OpConversionPattern<VariableOp> {
@@ -3543,7 +3743,7 @@ static void populateOpConversion(ConversionPatternSet &patterns,
                                  FunctionCache &funcCache) {
 
   patterns.add<ClassDeclOpConversion>(typeConverter, patterns.getContext(),
-                                      classCache);
+                                      classCache, funcCache);
   patterns.add<ClassNewOpConversion>(typeConverter, patterns.getContext(),
                                      classCache, funcCache);
   patterns.add<ClassRandomizeOpConversion>(typeConverter,

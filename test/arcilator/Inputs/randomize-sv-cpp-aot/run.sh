@@ -7,6 +7,7 @@ repo_root="$(cd "$script_dir/../../../.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$repo_root/build-bitwuzla}"
 OUT_DIR="${OUT_DIR:-$repo_root/build-bitwuzla/randomize-sv-cpp-aot-demo}"
 CXX="${CXX:-clang++}"
+PYTHON="${PYTHON:-python3}"
 
 circt_verilog="$BUILD_DIR/bin/circt-verilog"
 circt_opt="$BUILD_DIR/bin/circt-opt"
@@ -51,12 +52,22 @@ mkdir -p "$OUT_DIR"
 "$circt_opt" --convert-moore-to-core "$OUT_DIR/randomize-moore.mlir" \
   -o "$OUT_DIR/randomize-core.mlir"
 
+state_json="$OUT_DIR/randomize-state.json"
+class_json="$OUT_DIR/randomize-classes.json"
+header="$OUT_DIR/randomize-arc.h"
+
 "$arcilator" "$OUT_DIR/randomize-core.mlir" --emit-llvm --no-runtime \
+  --state-file "$state_json" --class-info-file "$class_json" \
   -o "$OUT_DIR/randomize.ll"
+
+"$PYTHON" "$repo_root/tools/arcilator/arcilator-header-cpp.py" \
+  "$state_json" --class-info "$class_json" > "$header"
 
 # shellcheck disable=SC2086
 "$CXX" "$OUT_DIR/randomize.ll" "$script_dir/testbench.cpp" "$arc_runtime_lib" \
-  $BITWUZLA_RANDOMIZE_LINK_FLAGS -Wno-override-module -fuse-ld=lld \
+  $BITWUZLA_RANDOMIZE_LINK_FLAGS -I"$OUT_DIR" -I"$BUILD_DIR/tools/arcilator" \
+  -I"$repo_root/tools/arcilator" \
+  -Wno-override-module -fuse-ld=lld \
   -o "$OUT_DIR/randomize.exe"
 
 "$OUT_DIR/randomize.exe"

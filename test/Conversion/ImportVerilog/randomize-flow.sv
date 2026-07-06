@@ -31,7 +31,7 @@ endmodule
 // IMPORT: moore.class.new
 // IMPORT: moore.class.randomize
 
-// LOWER-LABEL: func.func private @__circt_randomize_Packet
+// LOWER-LABEL: func.func @__circt_randomize_Packet
 // LOWER: call @arcRuntimeSolverCreate
 // LOWER: call @arcRuntimeSolverBvVar
 // LOWER: call @arcRuntimeSolverAssert

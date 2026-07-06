@@ -1,0 +1,23 @@
+[
+  {
+    "name": "Packet",
+    "numBytes": 32,
+    "newFn": "__circt_new_Packet",
+    "deleteFn": "__circt_delete_Packet",
+    "randomizeFn": "__circt_randomize_Packet",
+    "fields": [
+      {
+        "name": "len",
+        "offset": 16,
+        "numBits": 32,
+        "cppType": "int32_t"
+      },
+      {
+        "name": "addr",
+        "offset": 20,
+        "numBits": 32,
+        "cppType": "int32_t"
+      }
+    ]
+  }
+]

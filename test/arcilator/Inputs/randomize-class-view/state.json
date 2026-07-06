@@ -1,0 +1,28 @@
+[
+  {
+    "name": "PacketSink",
+    "numStateBytes": 32,
+    "initialFnSym": "",
+    "finalFnSym": "",
+    "states": [
+      {
+        "name": "len",
+        "offset": 16,
+        "numBits": 32,
+        "type": "input"
+      },
+      {
+        "name": "addr",
+        "offset": 20,
+        "numBits": 32,
+        "type": "input"
+      },
+      {
+        "name": "ok",
+        "offset": 24,
+        "numBits": 1,
+        "type": "output"
+      }
+    ]
+  }
+]

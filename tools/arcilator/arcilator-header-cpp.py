@@ -16,6 +16,75 @@ header_cpp_template = """// Enable this option when linking against libCIRCTArcR
 #endif
 #include "arcilator-runtime.h"
 
+{% if classes %}
+struct ClassField {
+  const char *name;
+  unsigned offset;
+  unsigned numBits;
+};
+
+{% for cls in classes %}
+extern "C" {
+void *{{ cls.newFn }}();
+void {{ cls.deleteFn }}(void *object);
+bool {{ cls.randomizeFn }}(void *object);
+}
+
+class {{ cls.name }}Layout {
+public:
+  static const char *name;
+  static const unsigned numBytes;
+  static const std::array<ClassField, {{ cls.fields|length }}> fields;
+};
+
+const char *{{ cls.name }}Layout::name = "{{ cls.name }}";
+const unsigned {{ cls.name }}Layout::numBytes = {{ cls.numBytes }};
+const std::array<ClassField, {{ cls.fields|length }}> {{ cls.name }}Layout::fields = {
+{% for field in cls.fields %}
+  ClassField{"{{ field.name }}", {{ field.offset }}, {{ field.numBits }}},
+{% endfor %}
+};
+
+class {{ cls.name }}View {
+public:
+{% for field in cls.fields %}
+  {{ field.cppType }} &{{ clean_name(field.name) }};
+{% endfor %}
+  uint8_t *object;
+
+  explicit {{ cls.name }}View(uint8_t *object) :
+{% for field in cls.fields %}
+    {{ clean_name(field.name) }}(*reinterpret_cast<{{ field.cppType }} *>(object + {{ field.offset }})),
+{% endfor %}
+    object(object) {}
+};
+
+class {{ cls.name }} {
+private:
+  uint8_t *object;
+
+public:
+  {{ cls.name }}() :
+    object(static_cast<uint8_t *>({{ cls.newFn }}())),
+    view(object) {}
+
+  ~{{ cls.name }}() {
+    {{ cls.deleteFn }}(object);
+    object = nullptr;
+  }
+
+  {{ cls.name }}(const {{ cls.name }} &) = delete;
+  {{ cls.name }} &operator=(const {{ cls.name }} &) = delete;
+  {{ cls.name }}({{ cls.name }} &&) = delete;
+  {{ cls.name }} &operator=({{ cls.name }} &&) = delete;
+
+  bool randomize() { return {{ cls.randomizeFn }}(object); }
+
+  {{ cls.name }}View view;
+};
+{% endfor %}
+{% endif %}
+
 {% for model in models %}
 extern "C" {
 {% if model.initialFnSym %}
@@ -180,6 +249,32 @@ class ModelInfo:
                      [StateInfo.decode(d) for d in d["states"]], list(), list())
 
 
+@dataclass
+class ClassFieldInfo:
+  name: str
+  offset: int
+  numBits: int
+  cppType: str
+
+  def decode(d: dict) -> "ClassFieldInfo":
+    return ClassFieldInfo(d["name"], d["offset"], d["numBits"], d["cppType"])
+
+
+@dataclass
+class ClassInfo:
+  name: str
+  numBytes: int
+  newFn: str
+  deleteFn: str
+  randomizeFn: str
+  fields: List[ClassFieldInfo]
+
+  def decode(d: dict) -> "ClassInfo":
+    return ClassInfo(d["name"], d["numBytes"], d["newFn"], d["deleteFn"],
+                     d["randomizeFn"],
+                     [ClassFieldInfo.decode(f) for f in d["fields"]])
+
+
 # Organize the state by hierarchy.
 def group_state_by_hierarchy(
     states: List[StateInfo]) -> Tuple[List[StateInfo], List[StateHierarchy]]:
@@ -338,7 +433,14 @@ def load_models(state_json):
   return ret
 
 
-def render_header_cpp(models, view_depth):
+def load_classes(class_info_json: Optional[str]) -> List[ClassInfo]:
+  if not class_info_json:
+    return []
+  with open(class_info_json, "r") as f:
+    return [ClassInfo.decode(d) for d in json.load(f)]
+
+
+def render_header_cpp(models, classes, view_depth):
   for model in models:
     reserved = {"state"}
     for io in model.io:
@@ -354,7 +456,9 @@ def render_header_cpp(models, view_depth):
 
   return template.render(
       models=models,
+      classes=classes,
       indent=indent,
+      clean_name=clean_name,
       format_hierarchy=format_hierarchy,
       format_view_hierarchy=format_view_hierarchy,
       state_cpp_type=state_cpp_type,
@@ -377,7 +481,12 @@ if __name__ == "__main__":
                       type=int,
                       default=-1,
                       help="hierarchy levels to expose as C++ structs")
+  parser.add_argument("--class-info",
+                      metavar="CLASS_INFO_JSON",
+                      default=None,
+                      help="randomizable class description file to process")
   args = parser.parse_args()
 
   models_data = load_models(args.state_json)
-  print(render_header_cpp(models_data, args.view_depth))
+  classes_data = load_classes(args.class_info)
+  print(render_header_cpp(models_data, classes_data, args.view_depth))

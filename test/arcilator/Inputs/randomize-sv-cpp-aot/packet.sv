@@ -1,13 +1,16 @@
 class Packet;
   rand int len;
-  constraint c { len > 0; }
+  rand int addr;
+
+  constraint len_c {
+    len > 0;
+  }
+
+  constraint addr_c {
+    addr == 16;
+  }
 endclass
 
-function int randomize_packet();
-  automatic Packet p = new;
-  bit ok;
-  ok = p.randomize();
-  return ok ? 0 : 1;
-endfunction
-
-export "DPI-C" randomize_packet = function randomize_packet;
+module PacketSink(input int len, input int addr, output bit ok);
+  assign ok = (len > 0) && (addr == 16);
+endmodule

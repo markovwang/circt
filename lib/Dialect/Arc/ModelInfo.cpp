@@ -188,6 +188,101 @@ void circt::arc::serializeModelInfoToJson(llvm::raw_ostream &outputStream,
   });
 }
 
+static LogicalResult getStringAttr(ModuleOp module, DictionaryAttr dict,
+                                   StringRef name, std::string &result) {
+  auto attr = dict.getAs<StringAttr>(name);
+  if (!attr)
+    return module.emitError("malformed circt.arc.class_info attribute");
+  result = attr.getValue().str();
+  return success();
+}
+
+static LogicalResult getIntegerAttr(ModuleOp module, DictionaryAttr dict,
+                                    StringRef name, uint64_t &result) {
+  auto attr = dict.getAs<IntegerAttr>(name);
+  if (!attr)
+    return module.emitError("malformed circt.arc.class_info attribute");
+  result = attr.getValue().getZExtValue();
+  return success();
+}
+
+LogicalResult circt::arc::collectClassInfo(ModuleOp module,
+                                           SmallVector<ClassInfo> &classes) {
+  auto attr = module->getAttrOfType<ArrayAttr>("circt.arc.class_info");
+  if (!attr)
+    return success();
+
+  for (auto classAttr : attr) {
+    auto classDict = dyn_cast<DictionaryAttr>(classAttr);
+    if (!classDict)
+      return module.emitError("malformed circt.arc.class_info attribute");
+
+    ClassInfo classInfo;
+    if (failed(getStringAttr(module, classDict, "name", classInfo.name)) ||
+        failed(getIntegerAttr(module, classDict, "numBytes",
+                              classInfo.numBytes)) ||
+        failed(getStringAttr(module, classDict, "newFn", classInfo.newFn)) ||
+        failed(getStringAttr(module, classDict, "deleteFn",
+                             classInfo.deleteFn)) ||
+        failed(getStringAttr(module, classDict, "randomizeFn",
+                             classInfo.randomizeFn)))
+      return failure();
+
+    auto fields = classDict.getAs<ArrayAttr>("fields");
+    if (!fields)
+      return module.emitError("malformed circt.arc.class_info attribute");
+
+    for (auto fieldAttr : fields) {
+      auto fieldDict = dyn_cast<DictionaryAttr>(fieldAttr);
+      if (!fieldDict)
+        return module.emitError("malformed circt.arc.class_info attribute");
+
+      ClassFieldInfo fieldInfo;
+      if (failed(getStringAttr(module, fieldDict, "name", fieldInfo.name)) ||
+          failed(getIntegerAttr(module, fieldDict, "offset",
+                                fieldInfo.offset)) ||
+          failed(getIntegerAttr(module, fieldDict, "numBits",
+                                fieldInfo.numBits)) ||
+          failed(getStringAttr(module, fieldDict, "cppType",
+                               fieldInfo.cppType)))
+        return failure();
+
+      classInfo.fields.push_back(std::move(fieldInfo));
+    }
+
+    classes.push_back(std::move(classInfo));
+  }
+
+  return success();
+}
+
+void circt::arc::serializeClassInfoToJson(llvm::raw_ostream &outputStream,
+                                          ArrayRef<ClassInfo> classes) {
+  llvm::json::OStream json(outputStream, 2);
+
+  json.array([&] {
+    for (const auto &classInfo : classes) {
+      json.object([&] {
+        json.attribute("name", classInfo.name);
+        json.attribute("numBytes", classInfo.numBytes);
+        json.attribute("newFn", classInfo.newFn);
+        json.attribute("deleteFn", classInfo.deleteFn);
+        json.attribute("randomizeFn", classInfo.randomizeFn);
+        json.attributeArray("fields", [&] {
+          for (const auto &field : classInfo.fields) {
+            json.object([&] {
+              json.attribute("name", field.name);
+              json.attribute("offset", field.offset);
+              json.attribute("numBits", field.numBits);
+              json.attribute("cppType", field.cppType);
+            });
+          }
+        });
+      });
+    }
+  });
+}
+
 circt::arc::ModelInfoAnalysis::ModelInfoAnalysis(Operation *container) {
   assert(container->getNumRegions() == 1 && "Expected single region");
   assert(container->getRegion(0).getBlocks().size() == 1 &&
